@@ -1,5 +1,6 @@
 using System;
 using Oxide.Core;
+using Oxide.Core.Libraries.Covalence;
 using Oxide.Game.Rust.Cui;
 using UnityEngine;
 using System.Collections.Generic;
@@ -140,6 +141,8 @@ namespace Oxide.Plugins
         private const string DevPlaceholderMsg =
             "These quests are still in early devoplment and will added soon!";
         private const string MissingDescriptionFallback = "Description coming soon.";
+        private const string EsquirePermission = "guishop.use";
+        private const string EsquireChatPrefix = "<color=#D87C2A>[Esquire]</color> ";
 
         // =========================
         // LIFECYCLE
@@ -149,6 +152,31 @@ namespace Oxide.Plugins
             LoadQuests();
             LoadPlayerData();
             LoadIgnoreData();
+        }
+
+        private void Init()
+        {
+            permission.RegisterPermission(EsquirePermission, this);
+        }
+
+        private object OnUserChat(IPlayer player, string message)
+        {
+            if (player == null || string.IsNullOrEmpty(message))
+            {
+                return null;
+            }
+
+            if (!permission.UserHasPermission(player.Id, EsquirePermission))
+            {
+                return null;
+            }
+
+            if (message.StartsWith(EsquireChatPrefix, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return EsquireChatPrefix + message;
         }
 
         private void Unload()
