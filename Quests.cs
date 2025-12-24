@@ -158,7 +158,7 @@ namespace Oxide.Plugins
             permission.RegisterPermission(EsquirePermission, this);
         }
 
-        private object OnPlayerChat(BasePlayer player, string message, Chat.ChatChannel channel)
+        private object OnPlayerChat(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
         {
             if (player == null || string.IsNullOrEmpty(message))
             {
