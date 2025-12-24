@@ -177,37 +177,6 @@ namespace Oxide.Plugins
             return MaybePrefixChatMessage(player?.UserIDString, message);
         }
 
-        private object OnChatMessage(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
-        {
-            return MaybePrefixChatMessage(player?.UserIDString, message);
-        }
-
-        private void OnChatMessage(Chat.ChatEntry entry)
-        {
-            if (entry == null)
-            {
-                return;
-            }
-
-            var player = BasePlayer.FindByID(entry.UserId);
-            if (player == null)
-            {
-                return;
-            }
-
-            if (!permission.UserHasPermission(player.UserIDString, EsquirePermission))
-            {
-                return;
-            }
-
-            if (entry.Username.StartsWith(EsquireChatPrefix, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            entry.Username = $"{EsquireChatPrefix}{entry.Username}";
-        }
-
         private object MaybePrefixChatMessage(string playerId, string message)
         {
             if (string.IsNullOrEmpty(playerId) || string.IsNullOrEmpty(message))
