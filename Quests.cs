@@ -167,14 +167,14 @@ namespace Oxide.Plugins
             return MaybePrefixChatMessage(player?.Id, message);
         }
 
-        private object OnChatMessage(Dictionary<string, object> data)
+        private object OnChatMessage(object data)
         {
-            if (data == null)
+            if (!(data is Dictionary<string, object> payload))
             {
                 return null;
             }
 
-            if (!data.TryGetValue("UserId", out var userIdValue))
+            if (!TryGetPayloadValue(payload, "UserId", "UserID", out var userIdValue))
             {
                 return null;
             }
@@ -190,7 +190,7 @@ namespace Oxide.Plugins
                 return null;
             }
 
-            if (!data.TryGetValue("Message", out var messageValue))
+            if (!TryGetPayloadValue(payload, "Message", "Text", out var messageValue))
             {
                 return null;
             }
@@ -206,8 +206,8 @@ namespace Oxide.Plugins
                 return null;
             }
 
-            data["Message"] = $"{EsquireChatPrefix} {message}";
-            return data;
+            payload["Message"] = $"{EsquireChatPrefix} {message}";
+            return payload;
         }
 
         private object OnPlayerChat(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
@@ -243,6 +243,22 @@ namespace Oxide.Plugins
             }
 
             return $"{EsquireChatPrefix} {message}";
+        }
+
+        private bool TryGetPayloadValue(Dictionary<string, object> payload, string primaryKey, string fallbackKey, out object value)
+        {
+            if (payload.TryGetValue(primaryKey, out value))
+            {
+                return true;
+            }
+
+            if (payload.TryGetValue(fallbackKey, out value))
+            {
+                return true;
+            }
+
+            value = null;
+            return false;
         }
 
         private void Unload()
