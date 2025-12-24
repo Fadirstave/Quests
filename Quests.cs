@@ -156,7 +156,10 @@ namespace Oxide.Plugins
 
         private void Init()
         {
-            permission.RegisterPermission(EsquirePermission, this);
+            if (!permission.PermissionExists(EsquirePermission))
+            {
+                permission.RegisterPermission(EsquirePermission, this);
+            }
         }
 
         private object OnUserChat(IPlayer player, string message)
