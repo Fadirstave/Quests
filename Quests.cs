@@ -167,6 +167,49 @@ namespace Oxide.Plugins
             return MaybePrefixChatMessage(player?.Id, message);
         }
 
+        private object OnChatMessage(Dictionary<string, object> data)
+        {
+            if (data == null)
+            {
+                return null;
+            }
+
+            if (!data.TryGetValue("UserId", out var userIdValue))
+            {
+                return null;
+            }
+
+            var playerId = userIdValue?.ToString();
+            if (string.IsNullOrEmpty(playerId))
+            {
+                return null;
+            }
+
+            if (!permission.UserHasPermission(playerId, EsquirePermission))
+            {
+                return null;
+            }
+
+            if (!data.TryGetValue("Message", out var messageValue))
+            {
+                return null;
+            }
+
+            var message = messageValue?.ToString();
+            if (string.IsNullOrEmpty(message))
+            {
+                return null;
+            }
+
+            if (message.StartsWith(EsquireChatPrefix, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            data["Message"] = $"{EsquireChatPrefix} {message}";
+            return data;
+        }
+
         private object OnPlayerChat(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
         {
             return MaybePrefixChatMessage(player?.UserIDString, message);
@@ -199,7 +242,7 @@ namespace Oxide.Plugins
                 return null;
             }
 
-            return EsquireChatPrefix + message;
+            return $"{EsquireChatPrefix} {message}";
         }
 
         private void Unload()
