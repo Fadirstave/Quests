@@ -1,5 +1,6 @@
 using System;
 using Oxide.Core;
+using Oxide.Core.Libraries.Covalence;
 using Oxide.Game.Rust.Cui;
 using UnityEngine;
 using System.Collections.Generic;
@@ -91,10 +92,12 @@ namespace Oxide.Plugins
         // =========================
         private Dictionary<int, QuestDefinition> quests;
         private Dictionary<ulong, QuestProgress> activeQuests;
+        private Dictionary<ulong, QuestProgress> dukeQuests;
         private readonly Dictionary<ItemCraftTask, ulong> craftTaskOwners = new Dictionary<ItemCraftTask, ulong>();
         private readonly HashSet<ulong> rewardDelayPending = new HashSet<ulong>();
 
         private const string PlayerDataFile = "Quests_PlayerData";
+        private const string DukeDataFile = "Quests_DukeData";
 
         // =========================
         // UI IDS
@@ -111,6 +114,7 @@ namespace Oxide.Plugins
 
         private readonly HashSet<ulong> questUiVisible = new HashSet<ulong>();
         private readonly HashSet<ulong> questCompleteVisible = new HashSet<ulong>();
+        private readonly HashSet<ulong> dukeUiVisible = new HashSet<ulong>();
 
         // =========================
         // UI CONSTANTS
@@ -140,6 +144,9 @@ namespace Oxide.Plugins
         private const string DevPlaceholderMsg =
             "These quests are still in early devoplment and will added soon!";
         private const string MissingDescriptionFallback = "Description coming soon.";
+        private const string DukeChainName = "theduke";
+        private const string EsquirePermission = "guishop.use";
+        private const string EsquireTitlePermission = "titlemanager.esquire";
 
         // =========================
         // LIFECYCLE
@@ -148,12 +155,22 @@ namespace Oxide.Plugins
         {
             LoadQuests();
             LoadPlayerData();
+            LoadDukeData();
             LoadIgnoreData();
+        }
+
+        private void Init()
+        {
+            if (!permission.PermissionExists(EsquirePermission))
+            {
+                permission.RegisterPermission(EsquirePermission, this);
+            }
         }
 
         private void Unload()
         {
             SavePlayerData();
+            SaveDukeData();
             SaveIgnoreData();
 
             foreach (var player in BasePlayer.activePlayerList)
@@ -166,6 +183,7 @@ namespace Oxide.Plugins
         private void OnServerSave()
         {
             SaveIgnoreData();
+            SaveDukeData();
         }
 
         // =========================
@@ -604,6 +622,21 @@ namespace Oxide.Plugins
             }
         }
 
+        private QuestDefinition BuildDukeQuest()
+        {
+            return new QuestDefinition
+            {
+                Id = 1,
+                Title = "The Duke — Initiation",
+                Description = "Prove thy worth by collecting a bottle of bleach.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["bleach"] = 1
+                },
+                Rewards = new List<QuestReward>()
+            };
+        }
+
         // =========================
         // DATA
         // =========================
@@ -614,9 +647,21 @@ namespace Oxide.Plugins
                 ?? new Dictionary<ulong, QuestProgress>();
         }
 
+        private void LoadDukeData()
+        {
+            dukeQuests =
+                Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, QuestProgress>>(DukeDataFile)
+                ?? new Dictionary<ulong, QuestProgress>();
+        }
+
         private void SavePlayerData()
         {
             Interface.Oxide.DataFileSystem.WriteObject(PlayerDataFile, activeQuests);
+        }
+
+        private void SaveDukeData()
+        {
+            Interface.Oxide.DataFileSystem.WriteObject(DukeDataFile, dukeQuests);
         }
 
         private bool TryGetActiveQuest(BasePlayer player, out QuestProgress progress, out QuestDefinition quest)
@@ -639,6 +684,27 @@ namespace Oxide.Plugins
             return true;
         }
 
+        private bool TryGetActiveDukeQuest(BasePlayer player, out QuestProgress progress, out QuestDefinition quest)
+        {
+            progress = null;
+            quest = null;
+
+            if (player == null)
+            {
+                return false;
+            }
+
+            progress = GetDukeProgress(player);
+
+            if (!progress.Started || progress.Completed || progress.RewardPending)
+            {
+                return false;
+            }
+
+            quest = BuildDukeQuest();
+            return true;
+        }
+
         private QuestProgress GetProgress(BasePlayer player)
         {
             if (!activeQuests.TryGetValue(player.userID, out var progress))
@@ -654,6 +720,22 @@ namespace Oxide.Plugins
                 progress.Completed = false;
                 progress.RewardPending = false;
                 SavePlayerData();
+            }
+
+            return progress;
+        }
+
+        private QuestProgress GetDukeProgress(BasePlayer player)
+        {
+            if (dukeQuests == null)
+            {
+                dukeQuests = new Dictionary<ulong, QuestProgress>();
+            }
+
+            if (!dukeQuests.TryGetValue(player.userID, out var progress))
+            {
+                progress = new QuestProgress { QuestId = 1 };
+                dukeQuests[player.userID] = progress;
             }
 
             return progress;
@@ -719,21 +801,23 @@ namespace Oxide.Plugins
 
             if (item?.info?.shortname == null) return;
 
-            if (!TryGetActiveQuest(player, out var progress, out var quest))
-                return;
-
             var normalizedKey = NormalizeRequirementKey(item.info.shortname);
 
-            if (quest.HasInventoryTrackedRequirements)
-                UpdateInventoryTrackedProgress(player, progress, quest);
+            if (TryGetActiveQuest(player, out var progress, out var quest))
+            {
+                if (quest.HasInventoryTrackedRequirements)
+                    UpdateInventoryTrackedProgress(player, progress, quest);
 
-            if (ShouldIgnoreContainerGainForGatherQuest(quest, normalizedKey))
-                return;
+                if (ShouldIgnoreContainerGainForGatherQuest(quest, normalizedKey))
+                    return;
 
-            if (InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                return;
+                if (InventoryTrackedRequirementKeys.Contains(normalizedKey))
+                    return;
 
-            HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, normalizedKey);
+                HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, normalizedKey);
+            }
+
+            HandleDukeItemAcquired(player, item.info.shortname, item.amount, normalizedKey);
         }
 
         private void OnEntityBuilt(Planner planner, GameObject go)
@@ -832,6 +916,40 @@ namespace Oxide.Plugins
                 return;
 
             HandleQuestItemAcquired(player, progress, quest, shortName, amount, requirementKeyOverride);
+        }
+
+        private void HandleDukeItemAcquired(BasePlayer player, string shortName, int amount, string requirementKeyOverride = null)
+        {
+            if (!TryGetActiveDukeQuest(player, out var progress, out var quest))
+                return;
+
+            if (string.IsNullOrEmpty(shortName) || amount <= 0)
+                return;
+
+            var requirementKey = requirementKeyOverride ?? NormalizeRequirementKey(shortName);
+            if (!quest.Requirements.TryGetValue(requirementKey, out var requiredAmount))
+                return;
+
+            if (!progress.Progress.ContainsKey(requirementKey))
+                progress.Progress[requirementKey] = 0;
+
+            progress.Progress[requirementKey] = Mathf.Min(
+                progress.Progress[requirementKey] + amount,
+                requiredAmount
+            );
+
+            if (dukeUiVisible.Contains(player.userID))
+            {
+                DrawDukeUI(player, progress, quest);
+            }
+
+            foreach (var req in quest.Requirements)
+            {
+                int cur = progress.Progress.TryGetValue(req.Key, out var v) ? v : 0;
+                if (cur < req.Value) return;
+            }
+
+            TryFinishDukeQuest(player, progress, quest);
         }
 
         private void EvaluateQuestProgressFulfillment(BasePlayer player, QuestProgress progress, QuestDefinition quest)
@@ -988,6 +1106,26 @@ namespace Oxide.Plugins
             });
         }
 
+        private void TryFinishDukeQuest(BasePlayer player, QuestProgress progress, QuestDefinition quest)
+        {
+            if (progress.Completed || progress.RewardPending)
+                return;
+
+            progress.RewardPending = true;
+            SaveDukeData();
+
+            GrantEsquireRewards(player);
+
+            progress.Completed = true;
+            progress.RewardPending = false;
+            SaveDukeData();
+
+            CuiHelper.DestroyUi(player, UiRoot);
+            dukeUiVisible.Remove(player.userID);
+
+            SendReply(player, Prefix + "The Duke recognizes thy service. Thou art now an Esquire.");
+        }
+
         [ChatCommand("reward")]
         private void CmdReward(BasePlayer player, string cmd, string[] args)
         {
@@ -1013,6 +1151,26 @@ namespace Oxide.Plugins
                 var item = ItemManager.Create(definition, reward.Amount);
                 if (item != null)
                     player.inventory.GiveItem(item);
+            }
+        }
+
+        private void GrantEsquireRewards(BasePlayer player)
+        {
+            if (player == null)
+            {
+                return;
+            }
+
+            if (!permission.UserHasPermission(player.UserIDString, EsquirePermission))
+            {
+                permission.GrantUserPermission(player.UserIDString, EsquirePermission, this);
+                player.IPlayer?.GrantPermission(EsquirePermission);
+            }
+
+            if (!permission.UserHasPermission(player.UserIDString, EsquireTitlePermission))
+            {
+                permission.GrantUserPermission(player.UserIDString, EsquireTitlePermission, this);
+                player.IPlayer?.GrantPermission(EsquireTitlePermission);
             }
         }
 
@@ -1136,7 +1294,21 @@ namespace Oxide.Plugins
                     return;
                 }
 
+                var chainName = args[0];
+                if (IsDukeChain(chainName))
+                {
+                    StartDukeQuest(player);
+                    return;
+                }
+
                 SendReply(player, Prefix + DevPlaceholderMsg);
+                return;
+            }
+
+            if (dukeUiVisible.Contains(player.userID))
+            {
+                CuiHelper.DestroyUi(player, UiRoot);
+                dukeUiVisible.Remove(player.userID);
                 return;
             }
 
@@ -1157,6 +1329,42 @@ namespace Oxide.Plugins
             questUiVisible.Add(player.userID);
         }
 
+        private bool IsDukeChain(string chainName)
+        {
+            if (string.IsNullOrWhiteSpace(chainName))
+            {
+                return false;
+            }
+
+            return chainName.Equals("duke", StringComparison.OrdinalIgnoreCase)
+                || chainName.Equals(DukeChainName, StringComparison.OrdinalIgnoreCase)
+                || chainName.Replace(" ", string.Empty).Equals(DukeChainName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void StartDukeQuest(BasePlayer player)
+        {
+            var progress = GetDukeProgress(player);
+            var quest = BuildDukeQuest();
+
+            if (progress.Completed)
+            {
+                SendReply(player, Prefix + "Thou hast already earned the favor of The Duke.");
+                return;
+            }
+
+            if (!progress.Started)
+            {
+                progress.Started = true;
+                SaveDukeData();
+            }
+
+            CuiHelper.DestroyUi(player, UiRoot);
+            questUiVisible.Remove(player.userID);
+
+            DrawDukeUI(player, progress, quest);
+            dukeUiVisible.Add(player.userID);
+        }
+
         [ChatCommand("questreset")]
         private void CmdQuestReset(BasePlayer player, string cmd, string[] args)
         {
@@ -1172,9 +1380,29 @@ namespace Oxide.Plugins
             }
             else
             {
-                if (!int.TryParse(args[0], out targetQuest) || !quests.ContainsKey(targetQuest))
+                if (!int.TryParse(args[0], out targetQuest))
                 {
-                    SendReply(player, Prefix + "Usage: /questreset <questId> [player name|steamId|me]");
+                    if (IsDukeChain(args[0]))
+                    {
+                        target = ResolvePlayerTarget(player, args.Length > 1 ? args[1] : "me");
+                        if (target == null)
+                        {
+                            SendReply(player, Prefix + "Target player not found.");
+                            return;
+                        }
+
+                        ResetDukeQuest(target);
+                        SendReply(player, Prefix + $"Reset The Duke quest chain for {target.displayName}.");
+                        return;
+                    }
+
+                    SendReply(player, Prefix + "Usage: /questreset <questId|The Duke> [player name|steamId|me]");
+                    return;
+                }
+
+                if (!quests.ContainsKey(targetQuest))
+                {
+                    SendReply(player, Prefix + "Usage: /questreset <questId|The Duke> [player name|steamId|me]");
                     return;
                 }
 
@@ -1202,6 +1430,28 @@ namespace Oxide.Plugins
             }
 
             SendReply(player, Prefix + $"Reset quest progress to Quest {targetQuest} for {target.displayName}.");
+        }
+
+        private void ResetDukeQuest(BasePlayer target)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            var quest = BuildDukeQuest();
+            dukeQuests[target.userID] = new QuestProgress { QuestId = quest.Id, Started = true };
+            SaveDukeData();
+
+            if (target.IsConnected)
+            {
+                CuiHelper.DestroyUi(target, UiRoot);
+                questUiVisible.Remove(target.userID);
+                dukeUiVisible.Remove(target.userID);
+
+                DrawDukeUI(target, GetDukeProgress(target), quest);
+                dukeUiVisible.Add(target.userID);
+            }
         }
 
         private void ForceCompleteQuest(BasePlayer target, int questId)
@@ -1293,13 +1543,21 @@ namespace Oxide.Plugins
 
         // =========================
         // UI (QUEST)
-        // =========================
         private void DrawUI(BasePlayer player)
         {
-            CuiHelper.DestroyUi(player, UiRoot);
-
             var progress = GetProgress(player);
             var quest = quests[progress.QuestId];
+            DrawQuestUi(player, progress, quest);
+        }
+
+        private void DrawDukeUI(BasePlayer player, QuestProgress progress, QuestDefinition quest)
+        {
+            DrawQuestUi(player, progress, quest);
+        }
+
+        private void DrawQuestUi(BasePlayer player, QuestProgress progress, QuestDefinition quest)
+        {
+            CuiHelper.DestroyUi(player, UiRoot);
 
             var lines = BuildDescriptionLines(quest);
 
@@ -1460,7 +1718,7 @@ namespace Oxide.Plugins
         private string BuildStarterCompletionMessage()
         {
             return "<size=18><color=#D87C2A><b>Starter quest complete!</b></color></size>\n" +
-                   "<color=#FFFFFF>The following quest chains have been unlocked: Fisherman, Hunter, Diver, Lumberjack, Treasure Hunter, Bounty Hunter, Explorer, Barrel Smasher. Start one with /quest <b>NAME</b>.</color>\n" +
+                   "<color=#FFFFFF>The following quest chains have been unlocked: The Duke, Fisherman, Hunter, Diver, Lumberjack, Treasure Hunter, Bounty Hunter, Explorer, Barrel Smasher. Start one with /quest <b>NAME</b>.</color>\n" +
                    "<color=#AAAAAA>The questing system is still in a very early stage and many quest chains may not be available yet! Leave me feedback in Discord #bug-reports.</color>";
         }
 
