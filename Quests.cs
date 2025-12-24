@@ -172,6 +172,11 @@ namespace Oxide.Plugins
             return MaybePrefixChatMessage(player?.UserIDString, message);
         }
 
+        private object OnPlayerChat(BasePlayer player, string message)
+        {
+            return MaybePrefixChatMessage(player?.UserIDString, message);
+        }
+
         private object OnChatMessage(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
         {
             return MaybePrefixChatMessage(player?.UserIDString, message);
