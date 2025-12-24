@@ -161,32 +161,27 @@ namespace Oxide.Plugins
 
         private object OnUserChat(IPlayer player, string message)
         {
-            if (player == null || string.IsNullOrEmpty(message))
-            {
-                return null;
-            }
-
-            if (!permission.UserHasPermission(player.Id, EsquirePermission))
-            {
-                return null;
-            }
-
-            if (message.StartsWith(EsquireChatPrefix, StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            return EsquireChatPrefix + message;
+            return MaybePrefixChatMessage(player?.Id, message);
         }
 
         private object OnPlayerChat(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
         {
-            if (player == null || string.IsNullOrEmpty(message))
+            return MaybePrefixChatMessage(player?.UserIDString, message);
+        }
+
+        private object OnChatMessage(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
+        {
+            return MaybePrefixChatMessage(player?.UserIDString, message);
+        }
+
+        private object MaybePrefixChatMessage(string playerId, string message)
+        {
+            if (string.IsNullOrEmpty(playerId) || string.IsNullOrEmpty(message))
             {
                 return null;
             }
 
-            if (!permission.UserHasPermission(player.UserIDString, EsquirePermission))
+            if (!permission.UserHasPermission(playerId, EsquirePermission))
             {
                 return null;
             }
