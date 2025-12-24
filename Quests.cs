@@ -1,5 +1,6 @@
 using System;
 using Oxide.Core;
+using Oxide.Core.Libraries.Covalence;
 using Oxide.Game.Rust.Cui;
 using UnityEngine;
 using System.Collections.Generic;
@@ -140,6 +141,8 @@ namespace Oxide.Plugins
         private const string DevPlaceholderMsg =
             "These quests are still in early devoplment and will added soon!";
         private const string MissingDescriptionFallback = "Description coming soon.";
+        private const string EsquirePermission = "guishop.use";
+        private const string EsquireChatPrefix = "<color=#D87C2A>[Esquire]</color> ";
 
         // =========================
         // LIFECYCLE
@@ -149,6 +152,113 @@ namespace Oxide.Plugins
             LoadQuests();
             LoadPlayerData();
             LoadIgnoreData();
+        }
+
+        private void Init()
+        {
+            if (!permission.PermissionExists(EsquirePermission))
+            {
+                permission.RegisterPermission(EsquirePermission, this);
+            }
+        }
+
+        private object OnUserChat(IPlayer player, string message)
+        {
+            return MaybePrefixChatMessage(player?.Id, message);
+        }
+
+        private object OnChatMessage(object data)
+        {
+            if (!(data is Dictionary<string, object> payload))
+            {
+                return null;
+            }
+
+            if (!TryGetPayloadValue(payload, "UserId", "UserID", out var userIdValue))
+            {
+                return null;
+            }
+
+            var playerId = userIdValue?.ToString();
+            if (string.IsNullOrEmpty(playerId))
+            {
+                return null;
+            }
+
+            if (!permission.UserHasPermission(playerId, EsquirePermission))
+            {
+                return null;
+            }
+
+            if (!TryGetPayloadValue(payload, "Message", "Text", out var messageValue))
+            {
+                return null;
+            }
+
+            var message = messageValue?.ToString();
+            if (string.IsNullOrEmpty(message))
+            {
+                return null;
+            }
+
+            if (message.StartsWith(EsquireChatPrefix, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            payload["Message"] = $"{EsquireChatPrefix} {message}";
+            return payload;
+        }
+
+        private object OnPlayerChat(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
+        {
+            return MaybePrefixChatMessage(player?.UserIDString, message);
+        }
+
+        private object OnPlayerChat(BasePlayer player, string message)
+        {
+            return MaybePrefixChatMessage(player?.UserIDString, message);
+        }
+
+        private object OnChatMessage(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
+        {
+            return MaybePrefixChatMessage(player?.UserIDString, message);
+        }
+
+        private object MaybePrefixChatMessage(string playerId, string message)
+        {
+            if (string.IsNullOrEmpty(playerId) || string.IsNullOrEmpty(message))
+            {
+                return null;
+            }
+
+            if (!permission.UserHasPermission(playerId, EsquirePermission))
+            {
+                return null;
+            }
+
+            if (message.StartsWith(EsquireChatPrefix, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return $"{EsquireChatPrefix} {message}";
+        }
+
+        private bool TryGetPayloadValue(Dictionary<string, object> payload, string primaryKey, string fallbackKey, out object value)
+        {
+            if (payload.TryGetValue(primaryKey, out value))
+            {
+                return true;
+            }
+
+            if (payload.TryGetValue(fallbackKey, out value))
+            {
+                return true;
+            }
+
+            value = null;
+            return false;
         }
 
         private void Unload()
