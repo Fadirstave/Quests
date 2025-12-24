@@ -1,6 +1,5 @@
 using System;
 using Oxide.Core;
-using Oxide.Core.Libraries.Covalence;
 using Oxide.Game.Rust.Cui;
 using UnityEngine;
 using System.Collections.Generic;
@@ -159,14 +158,14 @@ namespace Oxide.Plugins
             permission.RegisterPermission(EsquirePermission, this);
         }
 
-        private object OnUserChat(IPlayer player, string message)
+        private object OnPlayerChat(BasePlayer player, string message, ConVar.Chat.ChatChannel channel)
         {
             if (player == null || string.IsNullOrEmpty(message))
             {
                 return null;
             }
 
-            if (!permission.UserHasPermission(player.Id, EsquirePermission))
+            if (!permission.UserHasPermission(player.UserIDString, EsquirePermission))
             {
                 return null;
             }
