@@ -36,6 +36,8 @@ namespace Oxide.Plugins
             public Dictionary<string, int> Requirements;
             public List<QuestReward> Rewards;
             public bool HasInventoryTrackedRequirements;
+            public bool Completed;
+            public bool RewardPending;
         }
 
         class QuestProgress
@@ -72,9 +74,6 @@ namespace Oxide.Plugins
             ["basicblueprintfragment"] = "blueprint.fragment.basic",
             ["basic blueprint fragment"] = "blueprint.fragment.basic",
             ["basic blueprint"] = "blueprint.fragment.basic",
-            ["wall.torch"] = "torchholder",
-            ["torch holder"] = "torchholder",
-            ["torchholder"] = "torchholder",
         };
 
         private static readonly HashSet<string> InventoryTrackedRequirementKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -117,6 +116,7 @@ namespace Oxide.Plugins
         private readonly HashSet<ulong> questCompleteVisible = new HashSet<ulong>();
         private readonly HashSet<ulong> dukeCompleteVisible = new HashSet<ulong>();
         private readonly HashSet<ulong> dukeUiVisible = new HashSet<ulong>();
+        private readonly HashSet<ulong> pendingUiRestore = new HashSet<ulong>();
 
         // =========================
         // UI CONSTANTS
@@ -154,7 +154,7 @@ namespace Oxide.Plugins
         private const int DukeQuestFinalId = DukeQuestItemCount + 1;
         private const int DukeQuestIdOffset = 9000;
         private const string DukePriceCommand = "swear fealty";
-        private const string EsquirePermission = "guishop.use";
+        private const string EsquirePermission = "quests.guishop.use";
         private const string EsquireTitlePermission = "titlemanager.esquire";
 
         private static readonly string[] DukeRequiredItems =
@@ -222,25 +222,29 @@ namespace Oxide.Plugins
         {
             if (player == null) return;
 
-            // Respect ignore
-            if (ignoredPlayers.ContainsKey(player.userID)) return;
-
-            // Once per connection
-            if (loginShownThisSession.Contains(player.userID)) return;
-            loginShownThisSession.Add(player.userID);
-
-            // InfoPanel-style delay so chat is ready
-            timer.Once(3f, () =>
+            if (!ignoredPlayers.ContainsKey(player.userID))
             {
-                if (player == null || !player.IsConnected) return;
+                // Once per connection
+                if (!loginShownThisSession.Contains(player.userID))
+                {
+                    loginShownThisSession.Add(player.userID);
 
-                SendReply(player,
-                    "<size=18><color=#D87C2A><b>MMO QUESTING</b></color></size>\n" +
-                    "<color=#FFFFFF>This server features a unique MMO-style questing system.\n" +
-                    "Use <b>/quest</b> to begin. Questing is optional and not required to play.</color>\n" +
-                    "<color=#AAAAAA>Use <b>/questignore</b> to never see this message again. Report any issues on discord #bugreport.</color>"
-                );
-            });
+                    // InfoPanel-style delay so chat is ready
+                    timer.Once(3f, () =>
+                    {
+                        if (player == null || !player.IsConnected) return;
+
+                        SendReply(player,
+                            "<size=18><color=#D87C2A><b>MMO QUESTING</b></color></size>\n" +
+                            "<color=#FFFFFF>This server features a unique MMO-style questing system.\n" +
+                            "Use <b>/quest</b> to begin. Questing is optional and not required to play.</color>\n" +
+                            "<color=#AAAAAA>Use <b>/questignore</b> to never see this message again. Report any issues on discord #bugreport.</color>"
+                        );
+                    });
+                }
+            }
+
+            timer.Once(1f, () => RestoreQuestUi(player));
         }
 
         private void OnPlayerDisconnected(BasePlayer player, string reason)
@@ -248,6 +252,17 @@ namespace Oxide.Plugins
             if (player == null) return;
             // Allow showing again next time they connect (unless ignored)
             loginShownThisSession.Remove(player.userID);
+
+            if (questUiVisible.Contains(player.userID) || dukeUiVisible.Contains(player.userID))
+            {
+                pendingUiRestore.Add(player.userID);
+            }
+
+            questUiVisible.Remove(player.userID);
+            questCompleteVisible.Remove(player.userID);
+            dukeUiVisible.Remove(player.userID);
+            dukeCompleteVisible.Remove(player.userID);
+            rewardDelayPending.Remove(player.userID);
         }
 
         [ChatCommand("questignore")]
@@ -270,6 +285,33 @@ namespace Oxide.Plugins
         private void SaveIgnoreData()
         {
             Interface.Oxide.DataFileSystem.WriteObject(IgnoreDataFile, ignoredPlayers);
+        }
+
+        private void RestoreQuestUi(BasePlayer player)
+        {
+            if (player == null || !player.IsConnected)
+            {
+                return;
+            }
+
+            if (!pendingUiRestore.Remove(player.userID))
+            {
+                return;
+            }
+
+            if (TryGetActiveDukeQuest(player, out var dukeProgress, out var dukeQuest))
+            {
+                DrawDukeUI(player, dukeProgress, dukeQuest);
+                dukeUiVisible.Add(player.userID);
+                return;
+            }
+
+            var progress = GetProgress(player);
+            if (progress.Started && !progress.Completed && !progress.RewardPending && quests.ContainsKey(progress.QuestId))
+            {
+                DrawUI(player);
+                questUiVisible.Add(player.userID);
+            }
         }
 
         // =========================
@@ -389,7 +431,7 @@ namespace Oxide.Plugins
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "torchholder", Amount = 1 },
+                    new QuestReward { ShortName = "lantern", Amount = 1 },
                     new QuestReward { ShortName = "rug", Amount = 1 }
                 }
             };
@@ -464,11 +506,11 @@ namespace Oxide.Plugins
                 Description = "Render fuel from beast and cloth to feed the flame.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["lowgradefuel"] = 50
+                    ["lowgradefuel"] = 20
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "lowgradefuel", Amount = 100 }
+                    new QuestReward { ShortName = "lowgradefuel", Amount = 50 }
                 }
             };
 
@@ -476,176 +518,102 @@ namespace Oxide.Plugins
             {
                 Id = 13,
                 Title = "Quest 13 — Furnace",
-                Description = "Build a furnace and tame fire to shape the earth.",
+                Description = "Craft a furnace and begin the art of smelting.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["furnace"] = 1,
                     ["furnace.placed"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "furnace", Amount = 1 }
+                    new QuestReward { ShortName = "metal.fragments", Amount = 200 }
                 }
             };
 
             quests[14] = new QuestDefinition
             {
                 Id = 14,
-                Title = "Quest 14 — Metal Ore",
-                Description = "Seek metal in the stone, for stronger works await.",
+                Title = "Quest 14 — Smelting",
+                Description = "Smelt thy first fragments of metal.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["metal.ore"] = 500
+                    ["metal.fragments"] = 200
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "oretea.advanced", Amount = 1 }
+                    new QuestReward { ShortName = "metal.fragments", Amount = 200 }
                 }
             };
 
             quests[15] = new QuestDefinition
             {
                 Id = 15,
-                Title = "Quest 15 — Smelting",
-                Description = "Smelt raw ore into fragments fit for the forge.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["metal.fragments"] = 500
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "metal.fragments", Amount = 500 }
-                }
-            };
-
-            quests[16] = new QuestDefinition
-            {
-                Id = 16,
-                Title = "Quest 16 — Better Door",
-                Description = "Replace weak timber with metal, and harden thy hold.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["door.hinged.metal"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "pie.fish", Amount = 1 }
-                }
-            };
-
-            quests[17] = new QuestDefinition
-            {
-                Id = 17,
-                Title = "Quest 17 — Repairs",
-                Description = "Build a bench to mend gear worn by battle and toil.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["repair.bench"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 1 }
-                }
-            };
-
-            quests[18] = new QuestDefinition
-            {
-                Id = 18,
-                Title = "Quest 18 — Road Looting",
-                Description = "Walk the old roads and break barrels for forgotten spoils.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["machete"] = 1,
-                    ["road.barrel"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "scrap", Amount = 25 }
-                }
-            };
-
-            quests[19] = new QuestDefinition
-            {
-                Id = 19,
-                Title = "Quest 19 — Scrap Run",
-                Description = "Gather scrap from ruins, for knowledge hides in wreckage.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["scrap"] = 75
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "scrap", Amount = 25 }
-                }
-            };
-
-            quests[20] = new QuestDefinition
-            {
-                Id = 20,
-                Title = "Quest 20 — Recycling",
-                Description = "Reclaim value from broken things at the recycler.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["recycler_use"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 1 }
-                }
-            };
-
-            quests[21] = new QuestDefinition
-            {
-                Id = 21,
-                Title = "Quest 21 — Workbench",
-                Description = "Craft a workbench and unlock greater craft.",
+                Title = "Quest 15 — Workbench",
+                Description = "Build a workbench and expand thy craft.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["workbench1"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 2 }
+                    new QuestReward { ShortName = "workbench1", Amount = 1 }
                 }
             };
 
-            quests[22] = new QuestDefinition
+            quests[16] = new QuestDefinition
             {
-                Id = 22,
-                Title = "Quest 22 — Research",
-                Description = "Study lost designs and learn forgotten craft.",
+                Id = 16,
+                Title = "Quest 16 — Doors",
+                Description = "Craft a door and keep thy dwelling safe.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["research.table"] = 1
+                    ["door.hinged.wood"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 1 }
+                    new QuestReward { ShortName = "lock.key", Amount = 1 }
                 }
             };
 
-            quests[23] = new QuestDefinition
+            quests[17] = new QuestDefinition
             {
-                Id = 23,
-                Title = "Quest 23 — Engineering",
-                Description = "Master advanced craft and bend metal to thy will.",
+                Id = 17,
+                Title = "Quest 17 — Lighting",
+                Description = "Light thy home with a torch or lantern.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["iotable"] = 1
+                    ["torch"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "metal.fragments", Amount = 500 },
-                    new QuestReward { ShortName = "metal.refined", Amount = 50 }
+                    new QuestReward { ShortName = "wall.torch", Amount = 1 }
+                }
+            };
+
+            quests[18] = new QuestDefinition
+            {
+                Id = 18,
+                Title = "Quest 18 — Recycler",
+                Description = "Use a recycler to reclaim useful scraps.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["recycler_use"] = 1
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "scrap", Amount = 50 }
                 }
             };
 
             foreach (var quest in quests.Values)
             {
-                quest.HasInventoryTrackedRequirements = quest.Requirements?.Keys.Any(k => InventoryTrackedRequirementKeys.Contains(k)) == true;
+                quest.HasInventoryTrackedRequirements = quest.Requirements.Keys
+                    .Any(key => InventoryTrackedRequirementKeys.Contains(NormalizeRequirementKey(key)));
             }
         }
 
+        // =========================
+        // DUKE QUESTS
+        // =========================
         private QuestDefinition BuildDukeQuest(int questId)
         {
             if (questId == DukeQuestFinalId)
@@ -998,11 +966,8 @@ namespace Oxide.Plugins
                 DrawDukeUI(player, progress, quest);
             }
 
-            foreach (var req in quest.Requirements)
-            {
-                int cur = progress.Progress.TryGetValue(req.Key, out var v) ? v : 0;
-                if (cur < req.Value) return;
-            }
+            if (!HasMetAllRequirements(progress, quest))
+                return;
 
             TryFinishDukeQuest(player, progress, quest);
         }
@@ -1012,11 +977,8 @@ namespace Oxide.Plugins
             if (questUiVisible.Contains(player.userID))
                 DrawUI(player);
 
-            foreach (var req in quest.Requirements)
-            {
-                int cur = progress.Progress.TryGetValue(req.Key, out var v) ? v : 0;
-                if (cur < req.Value) return;
-            }
+            if (!HasMetAllRequirements(progress, quest))
+                return;
 
             TryFinishQuest(player, progress, quest);
         }
@@ -1058,6 +1020,18 @@ namespace Oxide.Plugins
 
             if (changed)
                 EvaluateQuestProgressFulfillment(player, progress, quest);
+        }
+
+        private bool HasMetAllRequirements(QuestProgress progress, QuestDefinition quest)
+        {
+            foreach (var req in quest.Requirements)
+            {
+                int cur = progress.Progress.TryGetValue(req.Key, out var v) ? v : 0;
+                if (cur < req.Value)
+                    return false;
+            }
+
+            return true;
         }
 
         private int CountItemAcrossPlayerInventories(BasePlayer player, ItemDefinition definition)
@@ -1248,210 +1222,52 @@ namespace Oxide.Plugins
                 return;
             }
 
-            if (!permission.UserHasPermission(player.UserIDString, EsquirePermission))
-            {
-                permission.GrantUserPermission(player.UserIDString, EsquirePermission, this);
-                player.IPlayer?.GrantPermission(EsquirePermission);
-            }
-
-            if (!permission.UserHasPermission(player.UserIDString, EsquireTitlePermission))
-            {
-                permission.GrantUserPermission(player.UserIDString, EsquireTitlePermission, this);
-                player.IPlayer?.GrantPermission(EsquireTitlePermission);
-            }
-        }
-
-        private BasePlayer FindDukeNpc()
-        {
-            var dukePlayer = BasePlayer.FindByID(DukeNpcId) ?? BasePlayer.FindSleeping(DukeNpcId);
-            if (dukePlayer != null)
-                return dukePlayer;
-
-            foreach (var candidate in BasePlayer.activePlayerList)
-            {
-                if (candidate == null || !candidate.IsNpc) continue;
-
-                if (candidate.userID == DukeNpcId)
-                    return candidate;
-
-                if (MatchesDukeNpcName(candidate.displayName))
-                    return candidate;
-            }
-
-            foreach (var candidate in BasePlayer.sleepingPlayerList)
-            {
-                if (candidate == null || !candidate.IsNpc) continue;
-
-                if (candidate.userID == DukeNpcId)
-                    return candidate;
-
-                if (MatchesDukeNpcName(candidate.displayName))
-                    return candidate;
-            }
-
-            foreach (var candidate in BasePlayer.allPlayerList)
-            {
-                if (candidate == null || !candidate.IsNpc) continue;
-
-                if (candidate.userID == DukeNpcId)
-                    return candidate;
-
-                if (MatchesDukeNpcName(candidate.displayName))
-                    return candidate;
-            }
-
-            return null;
-        }
-
-        private bool MatchesDukeNpcName(string name)
-        {
-            if (string.IsNullOrEmpty(name))
-                return false;
-
-            var cleaned = StripRichText(name);
-            return cleaned.Equals(DukeNpcName, StringComparison.OrdinalIgnoreCase)
-                || name.Equals(DukeNpcName, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private string StripRichText(string input)
-        {
-            if (string.IsNullOrEmpty(input))
-                return input;
-
-            var sb = new StringBuilder(input.Length);
-            bool insideTag = false;
-
-            foreach (var ch in input)
-            {
-                if (ch == '<')
-                {
-                    insideTag = true;
-                    continue;
-                }
-
-                if (ch == '>')
-                {
-                    insideTag = false;
-                    continue;
-                }
-
-                if (!insideTag)
-                    sb.Append(ch);
-            }
-
-            return sb.ToString();
-        }
-
-        private bool HasDukeOfferings(BasePlayer player)
-        {
-            foreach (var itemName in DukeRequiredItems)
-            {
-                var definition = FindItemDefinitionWithFallback(itemName);
-                if (definition == null)
-                    return false;
-
-                int total = CountItemInContainers(player, definition);
-                if (total < 1)
-                    return false;
-            }
-
-            return true;
-        }
-
-        private int CountItemInContainers(BasePlayer player, ItemDefinition definition)
-        {
-            if (player == null || definition == null)
-                return 0;
-
-            int total = 0;
-
-            void AddFromContainer(ItemContainer container)
-            {
-                if (container == null) return;
-
-                foreach (var item in container.itemList)
-                {
-                    if (item?.info == null) continue;
-                    if (!item.info.shortname.Equals(definition.shortname, StringComparison.OrdinalIgnoreCase)) continue;
-
-                    total += item.amount;
-                }
-            }
-
-            AddFromContainer(player.inventory?.containerMain);
-            AddFromContainer(player.inventory?.containerBelt);
-
-            return total;
-        }
-
-        private void RemoveDukeOfferings(BasePlayer player)
-        {
-            foreach (var itemName in DukeRequiredItems)
-            {
-                var definition = FindItemDefinitionWithFallback(itemName);
-                if (definition == null) continue;
-
-                int remaining = 1;
-                remaining = RemoveItemFromContainer(player.inventory?.containerMain, definition, remaining);
-                remaining = RemoveItemFromContainer(player.inventory?.containerBelt, definition, remaining);
-            }
-        }
-
-        private int RemoveItemFromContainer(ItemContainer container, ItemDefinition definition, int remaining)
-        {
-            if (container == null || definition == null || remaining <= 0)
-                return remaining;
-
-            for (int i = container.itemList.Count - 1; i >= 0; i--)
-            {
-                if (remaining <= 0)
-                    break;
-
-                var item = container.itemList[i];
-                if (item?.info == null) continue;
-                if (!item.info.shortname.Equals(definition.shortname, StringComparison.OrdinalIgnoreCase)) continue;
-
-                int amountToRemove = Math.Min(item.amount, remaining);
-                item.UseItem(amountToRemove);
-                remaining -= amountToRemove;
-            }
-
-            return remaining;
+            permission.GrantUserPermission(player.UserIDString, EsquirePermission, this);
+            permission.GrantUserPermission(player.UserIDString, EsquireTitlePermission, this);
         }
 
         private bool HasSpaceForRewards(BasePlayer player, QuestDefinition quest)
         {
-            var main = player.inventory.containerMain;
-            var belt = player.inventory.containerBelt;
+            if (player == null || player.inventory == null)
+                return false;
+
+            var itemCount = 0;
 
             foreach (var reward in quest.Rewards)
             {
-                var definition = FindItemDefinitionWithFallback(reward.ShortName);
-                if (definition == null)
-                    continue;
-
-                int remaining = reward.Amount;
-                remaining = ConsumeContainerSpace(main, definition, remaining);
-                remaining = ConsumeContainerSpace(belt, definition, remaining);
-
-                if (remaining > 0)
-                    return false;
+                if (ItemManager.FindItemDefinition(reward.ShortName) != null)
+                {
+                    itemCount++;
+                }
             }
 
-            return true;
+            return player.inventory.containerMain.capacity - player.inventory.containerMain.itemList.Count >= itemCount;
         }
 
-        private int ConsumeContainerSpace(ItemContainer container, ItemDefinition definition, int remaining)
+        private int GetRequiredSlots(ItemDefinition def, int amount)
         {
-            if (container == null || remaining <= 0)
-                return remaining;
+            if (def == null || amount <= 0)
+                return 0;
 
-            int maxStack = Math.Max(1, definition.stackable);
+            int maxStack = def.stackable > 0 ? def.stackable : 1;
+            int fullStacks = amount / maxStack;
+            int remaining = amount % maxStack;
+
+            return fullStacks + (remaining > 0 ? 1 : 0);
+        }
+
+        private int GetRemainingStackSlots(ItemContainer container, ItemDefinition def, int amount)
+        {
+            if (container == null || def == null || amount <= 0)
+                return amount;
+
+            int remaining = amount;
+            int maxStack = def.stackable > 0 ? def.stackable : 1;
 
             foreach (var item in container.itemList)
             {
-                if (item?.info == null) continue;
-                if (item.info != definition) continue;
+                if (item == null || item.info != def)
+                    continue;
 
                 int room = maxStack - item.amount;
                 if (room <= 0) continue;
@@ -1630,6 +1446,86 @@ namespace Oxide.Plugins
 
             DrawDukeUI(player, progress, quest);
             dukeUiVisible.Add(player.userID);
+        }
+
+        private bool HasDukeOfferings(BasePlayer player)
+        {
+            if (player == null)
+                return false;
+
+            foreach (var itemName in DukeRequiredItems)
+            {
+                var definition = FindItemDefinitionWithFallback(itemName);
+                if (definition == null)
+                    return false;
+
+                int total = CountItemInContainers(player, definition);
+                if (total < 1)
+                    return false;
+            }
+
+            return true;
+        }
+
+        private int CountItemInContainers(BasePlayer player, ItemDefinition definition)
+        {
+            if (player == null || definition == null)
+                return 0;
+
+            int total = 0;
+
+            void AddFromContainer(ItemContainer container)
+            {
+                if (container == null) return;
+
+                foreach (var item in container.itemList)
+                {
+                    if (item?.info == null) continue;
+                    if (!item.info.shortname.Equals(definition.shortname, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    total += item.amount;
+                }
+            }
+
+            AddFromContainer(player.inventory?.containerMain);
+            AddFromContainer(player.inventory?.containerBelt);
+
+            return total;
+        }
+
+        private void RemoveDukeOfferings(BasePlayer player)
+        {
+            foreach (var itemName in DukeRequiredItems)
+            {
+                var definition = FindItemDefinitionWithFallback(itemName);
+                if (definition == null) continue;
+
+                int remaining = 1;
+                remaining = RemoveItemFromContainer(player.inventory?.containerMain, definition, remaining);
+                remaining = RemoveItemFromContainer(player.inventory?.containerBelt, definition, remaining);
+            }
+        }
+
+        private int RemoveItemFromContainer(ItemContainer container, ItemDefinition definition, int remaining)
+        {
+            if (container == null || definition == null || remaining <= 0)
+                return remaining;
+
+            for (int i = container.itemList.Count - 1; i >= 0; i--)
+            {
+                if (remaining <= 0)
+                    break;
+
+                var item = container.itemList[i];
+                if (item?.info == null) continue;
+                if (!item.info.shortname.Equals(definition.shortname, StringComparison.OrdinalIgnoreCase)) continue;
+
+                int amountToRemove = Math.Min(item.amount, remaining);
+                item.UseItem(amountToRemove);
+                remaining -= amountToRemove;
+            }
+
+            return remaining;
         }
 
         private void TryTurnInDukePrice(BasePlayer player)
@@ -1919,7 +1815,12 @@ namespace Oxide.Plugins
         private void DrawUI(BasePlayer player)
         {
             var progress = GetProgress(player);
-            var quest = quests[progress.QuestId];
+            if (!quests.TryGetValue(progress.QuestId, out var quest))
+            {
+                SendReply(player, Prefix + DevPlaceholderMsg);
+                return;
+            }
+
             DrawQuestUi(player, progress, quest);
         }
 
@@ -2379,6 +2280,24 @@ namespace Oxide.Plugins
                 return false;
 
             var taskType = task.GetType();
+
+            var queueAmountField = taskType.GetField("queueAmount");
+            var completedAmountField = taskType.GetField("completedAmount");
+
+            if (queueAmountField?.GetValue(task) is int queued
+                && completedAmountField?.GetValue(task) is int completed)
+            {
+                return queued > completed;
+            }
+
+            var queueAmountProp = taskType.GetProperty("queueAmount");
+            var completedAmountProp = taskType.GetProperty("completedAmount");
+
+            if (queueAmountProp?.GetValue(task) is int queuedProp
+                && completedAmountProp?.GetValue(task) is int completedProp)
+            {
+                return queuedProp > completedProp;
+            }
 
             var amountField = taskType.GetField("amount");
             if (amountField?.GetValue(task) is int fieldAmount && fieldAmount > 1)
