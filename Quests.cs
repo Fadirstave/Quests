@@ -127,6 +127,7 @@ namespace Oxide.Plugins
         private const float QuestBarHeight = 0.12f;
         private const float GoalBarHeight = 0.10f;
         private const float LineHeight = 0.055f;
+        private const float ParchmentHeight = LineHeight * MaxLines;
         private const float HotbarOffsetY = -0.085f;
 
         private const int QuestFontSize = 14;
@@ -154,7 +155,7 @@ namespace Oxide.Plugins
         private const int DukeQuestFinalId = DukeQuestItemCount + 1;
         private const int DukeQuestIdOffset = 9000;
         private const string DukePriceCommand = "swear fealty";
-        private const string EsquirePermission = "quests.guishop.use";
+        private const string EsquirePermission = "guishop.use";
         private const string EsquireTitlePermission = "titlemanager.esquire";
 
         private static readonly string[] DukeRequiredItems =
@@ -187,6 +188,11 @@ namespace Oxide.Plugins
             if (!permission.PermissionExists(EsquirePermission))
             {
                 permission.RegisterPermission(EsquirePermission, this);
+            }
+
+            if (!permission.PermissionExists(EsquireTitlePermission))
+            {
+                permission.RegisterPermission(EsquireTitlePermission, this);
             }
         }
 
@@ -221,6 +227,8 @@ namespace Oxide.Plugins
         private void OnPlayerConnected(BasePlayer player)
         {
             if (player == null) return;
+
+            EnsureEsquirePermissions(player);
 
             if (!ignoredPlayers.ContainsKey(player.userID))
             {
@@ -503,10 +511,10 @@ namespace Oxide.Plugins
             {
                 Id = 12,
                 Title = "Quest 12 — Low Grade Fuel",
-                Description = "Render fuel from beast and cloth to feed the flame.",
+                Description = "Render animal fat with cloth to produce low grade fuel.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["lowgradefuel"] = 20
+                    ["lowgradefuel"] = 25
                 },
                 Rewards = new List<QuestReward>
                 {
@@ -517,75 +525,77 @@ namespace Oxide.Plugins
             quests[13] = new QuestDefinition
             {
                 Id = 13,
-                Title = "Quest 13 — Furnace",
-                Description = "Craft a furnace and begin the art of smelting.",
+                Title = "Quest 13 — Stone Furnace",
+                Description = "Craft and place a furnace to smelt thy ore.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["furnace.placed"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "metal.fragments", Amount = 200 }
+                    new QuestReward { ShortName = "oretea", Amount = 1 }
                 }
             };
 
             quests[14] = new QuestDefinition
             {
                 Id = 14,
-                Title = "Quest 14 — Smelting",
-                Description = "Smelt thy first fragments of metal.",
+                Title = "Quest 14 — Smelt Ore",
+                Description = "Smelt metal ore to produce metal fragments.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["metal.fragments"] = 200
+                    ["metal.fragments"] = 50
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "metal.fragments", Amount = 200 }
+                    new QuestReward { ShortName = "metal.fragments", Amount = 100 }
                 }
             };
 
             quests[15] = new QuestDefinition
             {
                 Id = 15,
-                Title = "Quest 15 — Workbench",
-                Description = "Build a workbench and expand thy craft.",
+                Title = "Quest 15 — Better Tools",
+                Description = "Upgrade to metal tools for more efficient work.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["workbench1"] = 1
+                    ["pickaxe"] = 1,
+                    ["hatchet"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "workbench1", Amount = 1 }
+                    new QuestReward { ShortName = "woodtea", Amount = 1 },
+                    new QuestReward { ShortName = "oretea", Amount = 1 }
                 }
             };
 
             quests[16] = new QuestDefinition
             {
                 Id = 16,
-                Title = "Quest 16 — Doors",
-                Description = "Craft a door and keep thy dwelling safe.",
+                Title = "Quest 16 — Recycler",
+                Description = "Use a recycler to reclaim useful scraps.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["door.hinged.wood"] = 1
+                    ["recycler_use"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "lock.key", Amount = 1 }
+                    new QuestReward { ShortName = "scrap", Amount = 50 }
                 }
             };
 
             quests[17] = new QuestDefinition
             {
                 Id = 17,
-                Title = "Quest 17 — Lighting",
-                Description = "Light thy home with a torch or lantern.",
+                Title = "Quest 17 — Metal Door",
+                Description = "Craft a sheet metal door to better protect thy home.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["torch"] = 1
+                    ["door.hinged.metal"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "wall.torch", Amount = 1 }
+                    new QuestReward { ShortName = "metal.fragments", Amount = 200 }
                 }
             };
 
@@ -754,88 +764,16 @@ namespace Oxide.Plugins
                 dukeQuests[player.userID] = progress;
             }
 
-            return progress;
-        }
-
-        // =========================
-        // GATHER TRACKING
-        // =========================
-        private void OnDispenserGathered(ResourceDispenser dispenser, BaseEntity entity, Item item)
-        {
-            var player = entity.ToPlayer();
-            if (player == null) return;
-
-            if (!TryGetActiveQuest(player, out var progress, out var quest))
-                return;
-
-            var normalizedKey = NormalizeRequirementKey(item.info.shortname);
-
-            HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, normalizedKey);
-
-            if (quest.HasInventoryTrackedRequirements && InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                UpdateInventoryTrackedProgress(player, progress, quest);
-        }
-
-        private void OnItemCraft(ItemCraftTask task, BasePlayer crafter, Item item)
-        {
-            if (task == null || crafter == null) return;
-
-            craftTaskOwners[task] = crafter.userID;
-        }
-
-        private void OnItemCraftFinished(ItemCraftTask task, Item item)
-        {
-            var player = GetCraftingPlayer(task, item);
-            if (player == null) return;
-
-            var overrideKey = item.info.shortname == "box.wooden" ? "box.wooden.crafted" : null;
-            var normalizedKey = NormalizeRequirementKey(item.info.shortname);
-
-            HandleDukeCraftedItemAcquired(player, item.info.shortname, item.amount, overrideKey ?? normalizedKey);
-
-            if (!TryGetActiveQuest(player, out var progress, out var quest))
-                return;
-
-            HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, overrideKey ?? normalizedKey);
-
-            if (quest.HasInventoryTrackedRequirements && InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                UpdateInventoryTrackedProgress(player, progress, quest);
-
-            if (!TaskHasMoreCrafts(task))
-                craftTaskOwners.Remove(task);
-        }
-
-        private void OnItemCraftCancelled(ItemCraftTask task)
-        {
-            if (task == null) return;
-
-            craftTaskOwners.Remove(task);
-        }
-
-        private void OnItemAddedToContainer(ItemContainer container, Item item)
-        {
-            var player = container?.GetOwnerPlayer() ?? container?.entityOwner?.ToPlayer();
-            if (player == null) return;
-
-            if (item?.info?.shortname == null) return;
-
-            var normalizedKey = NormalizeRequirementKey(item.info.shortname);
-
-            if (TryGetActiveQuest(player, out var progress, out var quest))
+            if (progress.Completed && progress.QuestId < DukeQuestFinalId)
             {
-                if (quest.HasInventoryTrackedRequirements)
-                    UpdateInventoryTrackedProgress(player, progress, quest);
-
-                if (ShouldIgnoreContainerGainForGatherQuest(quest, normalizedKey))
-                    return;
-
-                if (InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                    return;
-
-                HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, normalizedKey);
+                progress.QuestId++;
+                progress.Progress = new Dictionary<string, int>();
+                progress.Completed = false;
+                progress.RewardPending = false;
+                SaveDukeData();
             }
 
-            // Duke crafted-item quests should only advance from crafting completion.
+            return progress;
         }
 
         private bool IsDukeQuestId(int questId) =>
@@ -843,295 +781,272 @@ namespace Oxide.Plugins
 
         private int ToDukeQuestInternalId(int questId) => questId - DukeQuestIdOffset;
 
-        private void OnEntityBuilt(Planner planner, GameObject go)
+        private void RecordCraftTaskOwner(ItemCraftTask task, BasePlayer player)
         {
-            var entity = go.ToBaseEntity();
-            var player = planner?.GetOwnerPlayer();
-            if (entity == null || player == null) return;
+            if (task == null || player == null)
+                return;
 
-            var shortName = entity.ShortPrefabName ?? string.Empty;
+            craftTaskOwners[task] = player.userID;
+        }
 
-            if (shortName.Equals("cupboard.tool.deployed", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleQuestItemAcquired(player, "tool.cupboard", 1);
-            }
-            else if (entity is BuildingBlock)
-            {
-                HandleQuestItemAcquired(player, "building_block", 1);
-            }
-            else if (shortName.IndexOf("furnace", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "furnace.placed", 1);
-            }
-            else if (shortName.IndexOf("door.hinged", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                var normalizedDoor = NormalizeRequirementKey(shortName);
+        private void OnPlayerInput(BasePlayer player, InputState input)
+        {
+            if (player == null || input == null || input.WasJustPressed(BUTTON.USE))
+                return;
 
-                if (normalizedDoor == "door.hinged.wood" || normalizedDoor == "door.hinged.metal")
-                    HandleQuestItemAcquired(player, shortName, 1, normalizedDoor);
-            }
-            else if (shortName.IndexOf("box.wooden", StringComparison.OrdinalIgnoreCase) >= 0)
+            if (TryGetActiveQuest(player, out var progress, out var quest))
             {
-                HandleQuestItemAcquired(player, shortName, 1, "box.wooden.placed");
+                HandleQuestUseInput(player, progress, quest);
             }
-            else if (shortName.IndexOf("lock.key", StringComparison.OrdinalIgnoreCase) >= 0)
+
+            if (TryGetActiveDukeQuest(player, out var dukeProgress, out var dukeQuest))
             {
-                HandleQuestItemAcquired(player, "lock.key", 1);
+                HandleDukeQuestUseInput(player, dukeProgress, dukeQuest);
             }
         }
 
-        private void OnCupboardAuthorize(BuildingPrivlidge privilege, BasePlayer player)
+        private void HandleQuestUseInput(BasePlayer player, QuestProgress progress, QuestDefinition quest)
         {
-            if (privilege == null || player == null) return;
+            if (quest == null || progress == null)
+                return;
 
-            HandleQuestItemAcquired(player, "tc_auth", 1);
+            switch (quest.Id)
+            {
+                case 5:
+                    if (progress.Progress.TryGetValue("tc_auth", out var tcAuth) && tcAuth < quest.Requirements["tc_auth"])
+                    {
+                        progress.Progress["tc_auth"] = quest.Requirements["tc_auth"];
+                        SavePlayerData();
+                    }
+                    break;
+            }
+        }
+
+        private void HandleDukeQuestUseInput(BasePlayer player, QuestProgress progress, QuestDefinition quest)
+        {
+            if (quest == null || progress == null)
+                return;
+        }
+
+        private void OnItemCraftFinished(ItemCraftTask task, Item item)
+        {
+            if (task == null || item == null)
+                return;
+
+            var player = GetCraftingPlayer(task, item);
+            if (player == null)
+                return;
+
+            HandleCraftedItemAcquired(player, item.info.shortname, item.amount);
+
+            var overrideKey = task?.blueprint?.targetItem?.shortname;
+            var normalizedKey = NormalizeRequirementKey(item.info.shortname);
+            HandleDukeCraftedItemAcquired(player, item.info.shortname, item.amount, overrideKey ?? normalizedKey);
+
+            if (!TaskHasMoreCrafts(task))
+            {
+                craftTaskOwners.Remove(task);
+            }
+        }
+
+        private void OnItemCraftCancelled(ItemCraftTask task)
+        {
+            if (task == null)
+                return;
+
+            craftTaskOwners.Remove(task);
+        }
+
+        private void OnItemCraftStarted(ItemCraftTask task, Item item)
+        {
+            var player = GetCraftingPlayer(task, item);
+            if (player == null)
+                return;
+
+            RecordCraftTaskOwner(task, player);
+        }
+
+        private void OnItemAddedToContainer(ItemContainer container, Item item)
+        {
+            if (container == null || item == null)
+                return;
+
+            var player = container?.playerOwner;
+            if (player == null)
+                return;
+
+            var shortName = NormalizeRequirementKey(item.info.shortname);
+
+            if (TryGetActiveQuest(player, out var progress, out var quest))
+            {
+                if (!ShouldIgnoreContainerGainForGatherQuest(quest, shortName))
+                {
+                    IncrementRequirement(player, progress, quest, shortName, item.amount);
+                    DrawUI(player);
+                }
+            }
+
+            if (TryGetActiveDukeQuest(player, out var dukeProgress, out var dukeQuest))
+            {
+                IncrementDukeRequirement(player, dukeProgress, dukeQuest, shortName, item.amount);
+            }
+        }
+
+        private void OnEntityBuilt(Planner plan, GameObject go)
+        {
+            if (plan == null || go == null)
+                return;
+
+            var player = plan.GetOwnerPlayer();
+            if (player == null)
+                return;
+
+            if (!TryGetActiveQuest(player, out var progress, out var quest))
+                return;
+
+            var entity = go.ToBaseEntity();
+            if (entity == null)
+                return;
+
+            var prefabName = entity.ShortPrefabName;
+
+            if (prefabName.Contains("cupboard.tool.deployed"))
+                IncrementRequirement(player, progress, quest, "tc_auth", 1);
+
+            if (prefabName.Contains("wall") || prefabName.Contains("foundation") || prefabName.Contains("floor") || prefabName.Contains("stairs") || prefabName.Contains("roof"))
+                IncrementRequirement(player, progress, quest, "building_block", 1);
+        }
+
+        private void OnEntityKill(BaseCombatEntity entity, HitInfo info)
+        {
+            if (entity == null || info?.InitiatorPlayer == null)
+                return;
+
+            var player = info.InitiatorPlayer;
+
+            if (TryGetActiveQuest(player, out var progress, out var quest))
+            {
+                if (entity.ShortPrefabName.Contains("boar"))
+                    IncrementRequirement(player, progress, quest, "boar.kill", 1);
+            }
         }
 
         private void OnEntityDeath(BaseCombatEntity entity, HitInfo info)
         {
-            if (entity == null || info == null) return;
-
-            var player = info.InitiatorPlayer;
-            if (player == null) return;
-
-            var shortName = entity.ShortPrefabName ?? string.Empty;
-
-            if (shortName.IndexOf("boar", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "boar.kill", 1);
-            }
-            else if (shortName.IndexOf("barrel", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "road.barrel", 1);
-            }
-        }
-
-        private void OnRecyclerToggle(Recycler recycler, BasePlayer player)
-        {
-            if (recycler == null || player == null) return;
-
-            HandleQuestItemAcquired(player, "recycler_use", 1);
-        }
-
-        private void HandleQuestItemAcquired(BasePlayer player, QuestProgress progress, QuestDefinition quest, string shortName, int amount, string requirementKeyOverride = null)
-        {
-            if (string.IsNullOrEmpty(shortName) || amount <= 0 || quest == null)
+            if (entity == null || info?.InitiatorPlayer == null)
                 return;
 
-            var requirementKey = requirementKeyOverride ?? NormalizeRequirementKey(shortName);
+            var player = info.InitiatorPlayer;
 
-            if (!quest.Requirements.TryGetValue(requirementKey, out var requiredAmount)) return;
-
-            if (!progress.Progress.ContainsKey(requirementKey))
-                progress.Progress[requirementKey] = 0;
-
-            progress.Progress[requirementKey] = Mathf.Min(
-                progress.Progress[requirementKey] + amount,
-                requiredAmount
-            );
-
-            EvaluateQuestProgressFulfillment(player, progress, quest);
+            if (TryGetActiveQuest(player, out var progress, out var quest))
+            {
+                if (entity.ShortPrefabName.Contains("boar"))
+                    IncrementRequirement(player, progress, quest, "boar.kill", 1);
+            }
         }
 
-        private void HandleQuestItemAcquired(BasePlayer player, string shortName, int amount, string requirementKeyOverride = null)
+        private void HandleCraftedItemAcquired(BasePlayer player, string shortName, int amount)
         {
+            if (player == null)
+                return;
+
             if (!TryGetActiveQuest(player, out var progress, out var quest))
                 return;
 
-            HandleQuestItemAcquired(player, progress, quest, shortName, amount, requirementKeyOverride);
+            IncrementRequirement(player, progress, quest, NormalizeRequirementKey(shortName), amount);
+            DrawUI(player);
         }
 
         private void HandleDukeCraftedItemAcquired(BasePlayer player, string shortName, int amount, string requirementKeyOverride = null)
         {
+            if (player == null)
+                return;
+
             if (!TryGetActiveDukeQuest(player, out var progress, out var quest))
                 return;
 
-            if (string.IsNullOrEmpty(shortName) || amount <= 0)
+            var normalizedKey = NormalizeRequirementKey(shortName);
+            var requirementKey = requirementKeyOverride ?? normalizedKey;
+
+            IncrementDukeRequirement(player, progress, quest, requirementKey, amount);
+        }
+
+        private void IncrementRequirement(BasePlayer player, QuestProgress progress, QuestDefinition quest, string key, int amount)
+        {
+            if (quest == null || progress == null)
                 return;
 
-            var requirementKey = requirementKeyOverride ?? NormalizeRequirementKey(shortName);
-            if (!quest.Requirements.TryGetValue(requirementKey, out var requiredAmount))
+            if (!quest.Requirements.ContainsKey(key))
                 return;
 
-            if (!progress.Progress.ContainsKey(requirementKey))
-                progress.Progress[requirementKey] = 0;
+            if (!progress.Progress.ContainsKey(key))
+                progress.Progress[key] = 0;
 
-            progress.Progress[requirementKey] = Mathf.Min(
-                progress.Progress[requirementKey] + amount,
-                requiredAmount
-            );
+            progress.Progress[key] += amount;
 
-            if (dukeUiVisible.Contains(player.userID))
-            {
-                DrawDukeUI(player, progress, quest);
-            }
+            if (progress.Progress[key] >= quest.Requirements[key])
+                progress.Progress[key] = quest.Requirements[key];
 
-            if (!HasMetAllRequirements(progress, quest))
+            SavePlayerData();
+            TryCompleteQuest(player, progress, quest);
+        }
+
+        private void IncrementDukeRequirement(BasePlayer player, QuestProgress progress, QuestDefinition quest, string key, int amount)
+        {
+            if (quest == null || progress == null)
                 return;
 
+            if (!quest.Requirements.ContainsKey(key))
+                return;
+
+            if (!progress.Progress.ContainsKey(key))
+                progress.Progress[key] = 0;
+
+            progress.Progress[key] += amount;
+
+            if (progress.Progress[key] >= quest.Requirements[key])
+                progress.Progress[key] = quest.Requirements[key];
+
+            SaveDukeData();
             TryFinishDukeQuest(player, progress, quest);
         }
 
-        private void EvaluateQuestProgressFulfillment(BasePlayer player, QuestProgress progress, QuestDefinition quest)
+        private void TryCompleteQuest(BasePlayer player, QuestProgress progress, QuestDefinition quest)
         {
-            if (questUiVisible.Contains(player.userID))
-                DrawUI(player);
-
-            if (!HasMetAllRequirements(progress, quest))
+            if (progress.Completed || progress.RewardPending)
                 return;
-
-            TryFinishQuest(player, progress, quest);
-        }
-
-        private void UpdateInventoryTrackedProgress(BasePlayer player)
-        {
-            if (!TryGetActiveQuest(player, out var progress, out var quest))
-                return;
-
-            UpdateInventoryTrackedProgress(player, progress, quest);
-        }
-
-        private void UpdateInventoryTrackedProgress(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            if (player == null || quest == null || !quest.HasInventoryTrackedRequirements)
-                return;
-
-            bool changed = false;
 
             foreach (var req in quest.Requirements)
             {
-                if (!InventoryTrackedRequirementKeys.Contains(req.Key))
-                    continue;
-
-                var def = FindItemDefinitionWithFallback(req.Key);
-                if (def == null)
-                    continue;
-
-                int existing = progress.Progress.TryGetValue(req.Key, out var current) ? current : 0;
-                int total = CountItemAcrossPlayerInventories(player, def);
-                int clamped = Mathf.Min(req.Value, Math.Max(existing, total));
-
-                if (clamped != existing)
-                {
-                    progress.Progress[req.Key] = clamped;
-                    changed = true;
-                }
+                if (!progress.Progress.TryGetValue(req.Key, out var value) || value < req.Value)
+                    return;
             }
-
-            if (changed)
-                EvaluateQuestProgressFulfillment(player, progress, quest);
-        }
-
-        private bool HasMetAllRequirements(QuestProgress progress, QuestDefinition quest)
-        {
-            foreach (var req in quest.Requirements)
-            {
-                int cur = progress.Progress.TryGetValue(req.Key, out var v) ? v : 0;
-                if (cur < req.Value)
-                    return false;
-            }
-
-            return true;
-        }
-
-        private int CountItemAcrossPlayerInventories(BasePlayer player, ItemDefinition definition)
-        {
-            if (player == null || definition == null)
-                return 0;
-
-            int total = 0;
-
-            void AddFromContainer(ItemContainer container)
-            {
-                if (container == null) return;
-
-                foreach (var item in container.itemList)
-                {
-                    if (item?.info == null) continue;
-                    if (!item.info.shortname.Equals(definition.shortname, StringComparison.OrdinalIgnoreCase)) continue;
-
-                    total += item.amount;
-                }
-            }
-
-            AddFromContainer(player.inventory?.containerMain);
-            AddFromContainer(player.inventory?.containerBelt);
-
-            return total;
-        }
-
-        // =========================
-        // REWARD GATING
-        // =========================
-        private void TryFinishQuest(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            if (rewardDelayPending.Contains(player.userID))
-                return;
 
             if (!HasSpaceForRewards(player, quest))
             {
                 progress.RewardPending = true;
                 SavePlayerData();
-
                 SendReply(player, Prefix + InvFullMsg);
-                return; // 🚫 NO UI, NO REDRAW
+                return;
             }
 
-            progress.RewardPending = true;
+            progress.Completed = true;
             SavePlayerData();
-            rewardDelayPending.Add(player.userID);
 
-            timer.Once(RewardDelaySeconds, () =>
+            GiveRewards(player, quest);
+
+            CuiHelper.DestroyUi(player, UiRoot);
+            questUiVisible.Remove(player.userID);
+
+            PlayQuestCompleteSound(player);
+
+            timer.Once(UiSwapDelay, () =>
             {
-                rewardDelayPending.Remove(player.userID);
-
-                if (player == null || !player.IsConnected)
-                    return;
-
-                if (!HasSpaceForRewards(player, quest))
-                {
-                    SendReply(player, Prefix + InvFullMsg);
-                    progress.RewardPending = true;
-                    SavePlayerData();
-                    return;
-                }
-
-                GiveRewards(player, quest);
-
-                bool hasNextQuest = quests.ContainsKey(progress.QuestId + 1);
-
-                if (hasNextQuest)
-                {
-                    progress.QuestId++;
-                    progress.Progress = new Dictionary<string, int>();
-                    progress.Completed = false;
-                    progress.RewardPending = false;
-                    SavePlayerData();
-
-                    SendReply(player, Prefix + $"Next quest unlocked: {quests[progress.QuestId].Title}");
-                }
-                else
-                {
-                    progress.Completed = true;
-                    progress.RewardPending = false;
-                    SavePlayerData();
-
-                    SendReply(player, BuildStarterCompletionMessage());
-                }
-
-                CuiHelper.DestroyUi(player, UiRoot);
-                questUiVisible.Remove(player.userID);
-
-                PlayQuestCompleteSound(player);
-
-                timer.Once(UiSwapDelay, () =>
-                {
-                    if (player == null || !player.IsConnected) return;
-                    CuiHelper.DestroyUi(player, QuestCompleteRoot);
-                    questCompleteVisible.Remove(player.userID);
-                    DrawQuestCompleteUI(player, quest);
-                    questCompleteVisible.Add(player.userID);
-                });
+                if (player == null || !player.IsConnected) return;
+                CuiHelper.DestroyUi(player, QuestCompleteRoot);
+                questCompleteVisible.Remove(player.userID);
+                DrawQuestCompleteUI(player, quest);
+                questCompleteVisible.Add(player.userID);
             });
         }
 
@@ -1187,17 +1102,6 @@ namespace Oxide.Plugins
             });
         }
 
-        [ChatCommand("reward")]
-        private void CmdReward(BasePlayer player, string cmd, string[] args)
-        {
-            if (player == null) return;
-
-            var progress = GetProgress(player);
-            if (!progress.RewardPending) return;
-
-            TryFinishQuest(player, progress, quests[progress.QuestId]);
-        }
-
         private void GiveRewards(BasePlayer player, QuestDefinition quest)
         {
             foreach (var reward in quest.Rewards)
@@ -1226,6 +1130,30 @@ namespace Oxide.Plugins
             permission.GrantUserPermission(player.UserIDString, EsquireTitlePermission, this);
         }
 
+        private void EnsureEsquirePermissions(BasePlayer player)
+        {
+            if (player == null)
+            {
+                return;
+            }
+
+            var progress = GetDukeProgress(player);
+            if (!progress.Completed)
+            {
+                return;
+            }
+
+            if (!permission.UserHasPermission(player.UserIDString, EsquirePermission))
+            {
+                permission.GrantUserPermission(player.UserIDString, EsquirePermission, this);
+            }
+
+            if (!permission.UserHasPermission(player.UserIDString, EsquireTitlePermission))
+            {
+                permission.GrantUserPermission(player.UserIDString, EsquireTitlePermission, this);
+            }
+        }
+
         private bool HasSpaceForRewards(BasePlayer player, QuestDefinition quest)
         {
             if (player == null || player.inventory == null)
@@ -1244,716 +1172,197 @@ namespace Oxide.Plugins
             return player.inventory.containerMain.capacity - player.inventory.containerMain.itemList.Count >= itemCount;
         }
 
-        private int GetRequiredSlots(ItemDefinition def, int amount)
-        {
-            if (def == null || amount <= 0)
-                return 0;
-
-            int maxStack = def.stackable > 0 ? def.stackable : 1;
-            int fullStacks = amount / maxStack;
-            int remaining = amount % maxStack;
-
-            return fullStacks + (remaining > 0 ? 1 : 0);
-        }
-
-        private int GetRemainingStackSlots(ItemContainer container, ItemDefinition def, int amount)
-        {
-            if (container == null || def == null || amount <= 0)
-                return amount;
-
-            int remaining = amount;
-            int maxStack = def.stackable > 0 ? def.stackable : 1;
-
-            foreach (var item in container.itemList)
-            {
-                if (item == null || item.info != def)
-                    continue;
-
-                int room = maxStack - item.amount;
-                if (room <= 0) continue;
-
-                int used = Math.Min(room, remaining);
-                remaining -= used;
-
-                if (remaining <= 0)
-                    return 0;
-            }
-
-            int emptySlots = container.capacity - container.itemList.Count;
-            if (emptySlots > 0)
-            {
-                int slotCapacity = emptySlots * maxStack;
-                remaining = Math.Max(0, remaining - slotCapacity);
-            }
-
-            return remaining;
-        }
-
-        private void PlayQuestCompleteSound(BasePlayer player)
-        {
-            Effect.server.Run(
-                "assets/prefabs/deployable/research table/effects/research-success.prefab",
-                player.transform.position
-            );
-        }
-
         // =========================
-        // QUEST COMPLETE BUTTON
+        // UI DRAWING
         // =========================
-        [ConsoleCommand("quests.complete.next")]
-        private void CmdQuestCompleteNext(ConsoleSystem.Arg arg)
-        {
-            var player = arg.Player();
-            if (player == null) return;
-
-            CuiHelper.DestroyUi(player, QuestCompleteRoot);
-            questCompleteVisible.Remove(player.userID);
-
-            var progress = GetProgress(player);
-
-            if (progress.Completed && quests.ContainsKey(progress.QuestId + 1))
-            {
-                progress.QuestId++;
-                progress.Progress = new Dictionary<string, int>();
-                progress.Completed = false;
-                progress.RewardPending = false;
-                SavePlayerData();
-            }
-
-            if (quests.ContainsKey(progress.QuestId) && !progress.Completed)
-            {
-                DrawUI(player);
-                questUiVisible.Add(player.userID);
-                return;
-            }
-
-            SendReply(player,
-                Prefix + "Starting quests complete! Do /quest to further your adventures!");
-        }
-
-        // =========================
-        // COMMANDS
-        // =========================
-        [ChatCommand("quest")]
-        private void CmdQuest(BasePlayer player, string cmd, string[] args)
+        private void DrawUI(BasePlayer player)
         {
             if (player == null) return;
-
-            var progress = GetProgress(player);
-
-            if (!progress.Started)
-            {
-                progress.Started = true;
-                SavePlayerData();
-            }
-
-            if (args.Length > 0)
-            {
-                if (!progress.Completed)
-                {
-                    SendReply(player, Prefix + "Complete the starter quest before starting quest chains.");
-                    return;
-                }
-
-                var input = string.Join(" ", args).Trim();
-                if (IsDukePriceCommand(input))
-                {
-                    TryTurnInDukePrice(player);
-                    return;
-                }
-
-                if (IsDukeChain(input))
-                {
-                    StartDukeQuest(player);
-                    return;
-                }
-
-                SendReply(player, Prefix + DevPlaceholderMsg);
-                return;
-            }
-
-            if (dukeUiVisible.Contains(player.userID))
-            {
-                CuiHelper.DestroyUi(player, UiRoot);
-                dukeUiVisible.Remove(player.userID);
-                return;
-            }
-
-            if (questUiVisible.Contains(player.userID))
-            {
-                CuiHelper.DestroyUi(player, UiRoot);
-                questUiVisible.Remove(player.userID);
-                return;
-            }
-
-            if (TryGetActiveDukeQuest(player, out var dukeProgress, out var dukeQuest))
-            {
-                DrawDukeUI(player, dukeProgress, dukeQuest);
-                dukeUiVisible.Add(player.userID);
-                return;
-            }
-
-            if (progress.Completed)
-            {
-                SendReply(player, BuildStarterCompletionMessage());
-                return;
-            }
-
-            DrawUI(player);
-            questUiVisible.Add(player.userID);
-        }
-
-        private bool IsDukeChain(string chainName)
-        {
-            if (string.IsNullOrWhiteSpace(chainName))
-            {
-                return false;
-            }
-
-            return chainName.Equals("duke", StringComparison.OrdinalIgnoreCase)
-                || chainName.Equals(DukeChainName, StringComparison.OrdinalIgnoreCase)
-                || chainName.Replace(" ", string.Empty).Equals(DukeChainName, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private bool IsDukePriceCommand(string input)
-        {
-            if (string.IsNullOrWhiteSpace(input))
-                return false;
-
-            var normalized = input.Trim().ToLowerInvariant().Replace("’", "'");
-            return normalized.Equals(DukePriceCommand, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private void StartDukeQuest(BasePlayer player)
-        {
-            var progress = GetDukeProgress(player);
-            var quest = BuildDukeQuest(progress.QuestId);
-
-            if (progress.Completed)
-            {
-                SendReply(player, Prefix + "Thou hast already earned the favor of The Duke.");
-                return;
-            }
-
-            if (!progress.Started)
-            {
-                progress.Started = true;
-                SaveDukeData();
-            }
 
             CuiHelper.DestroyUi(player, UiRoot);
             questUiVisible.Remove(player.userID);
 
-            DrawDukeUI(player, progress, quest);
-            dukeUiVisible.Add(player.userID);
-        }
-
-        private bool HasDukeOfferings(BasePlayer player)
-        {
-            if (player == null)
-                return false;
-
-            foreach (var itemName in DukeRequiredItems)
-            {
-                var definition = FindItemDefinitionWithFallback(itemName);
-                if (definition == null)
-                    return false;
-
-                int total = CountItemInContainers(player, definition);
-                if (total < 1)
-                    return false;
-            }
-
-            return true;
-        }
-
-        private int CountItemInContainers(BasePlayer player, ItemDefinition definition)
-        {
-            if (player == null || definition == null)
-                return 0;
-
-            int total = 0;
-
-            void AddFromContainer(ItemContainer container)
-            {
-                if (container == null) return;
-
-                foreach (var item in container.itemList)
-                {
-                    if (item?.info == null) continue;
-                    if (!item.info.shortname.Equals(definition.shortname, StringComparison.OrdinalIgnoreCase)) continue;
-
-                    total += item.amount;
-                }
-            }
-
-            AddFromContainer(player.inventory?.containerMain);
-            AddFromContainer(player.inventory?.containerBelt);
-
-            return total;
-        }
-
-        private void RemoveDukeOfferings(BasePlayer player)
-        {
-            foreach (var itemName in DukeRequiredItems)
-            {
-                var definition = FindItemDefinitionWithFallback(itemName);
-                if (definition == null) continue;
-
-                int remaining = 1;
-                remaining = RemoveItemFromContainer(player.inventory?.containerMain, definition, remaining);
-                remaining = RemoveItemFromContainer(player.inventory?.containerBelt, definition, remaining);
-            }
-        }
-
-        private int RemoveItemFromContainer(ItemContainer container, ItemDefinition definition, int remaining)
-        {
-            if (container == null || definition == null || remaining <= 0)
-                return remaining;
-
-            for (int i = container.itemList.Count - 1; i >= 0; i--)
-            {
-                if (remaining <= 0)
-                    break;
-
-                var item = container.itemList[i];
-                if (item?.info == null) continue;
-                if (!item.info.shortname.Equals(definition.shortname, StringComparison.OrdinalIgnoreCase)) continue;
-
-                int amountToRemove = Math.Min(item.amount, remaining);
-                item.UseItem(amountToRemove);
-                remaining -= amountToRemove;
-            }
-
-            return remaining;
-        }
-
-        private void TryTurnInDukePrice(BasePlayer player)
-        {
-            if (player == null)
+            if (!TryGetActiveQuest(player, out var progress, out var quest))
                 return;
 
-            if (!TryGetActiveDukeQuest(player, out var progress, out var quest) || quest.Id != DukeQuestFinalId)
-            {
-                SendReply(player, Prefix + "must complete \"The Duke\" Quest Chain");
-                return;
-            }
+            var questTitle = quest.Title;
+            var questLines = BuildDescriptionLines(quest);
+            var rewardLine = BuildRewardLine(quest);
 
-            if (!HasDukeOfferings(player))
-            {
-                SendReply(player, "You have not yet gathered all offerings for the Duke.");
-                return;
-            }
-
-            RemoveDukeOfferings(player);
-
-            progress.Progress["duke_meet"] = 1;
-            SaveDukeData();
-
-            if (dukeUiVisible.Contains(player.userID))
-                DrawDukeUI(player, progress, quest);
-
-            TryFinishDukeQuest(player, progress, quest);
-        }
-
-        [ChatCommand("questreset")]
-        private void CmdQuestReset(BasePlayer player, string cmd, string[] args)
-        {
-            if (!IsAdmin(player)) return;
-
-            int targetQuest;
-            BasePlayer target;
-
-            if (args.Length == 0)
-            {
-                var currentProgress = GetProgress(player);
-                targetQuest = Math.Max(1, currentProgress.QuestId - 1);
-                target = player;
-            }
-            else
-            {
-                if (!int.TryParse(args[0], out targetQuest))
-                {
-                    if (IsDukeChain(args[0]))
-                    {
-                        target = ResolvePlayerTarget(player, args.Length > 1 ? args[1] : "me");
-                        if (target == null)
-                        {
-                            SendReply(player, Prefix + "Target player not found.");
-                            return;
-                        }
-
-                        ResetDukeQuest(target);
-                        SendReply(player, Prefix + $"Reset The Duke quest chain for {target.displayName}.");
-                        return;
-                    }
-
-                    SendReply(player, Prefix + "Usage: /questreset <questId|The Duke> [player name|steamId|me]");
-                    return;
-                }
-
-                if (IsDukeQuestId(targetQuest))
-                {
-                    target = ResolvePlayerTarget(player, args.Length > 1 ? args[1] : "me");
-                    if (target == null)
-                    {
-                        SendReply(player, Prefix + "Target player not found.");
-                        return;
-                    }
-
-                    ResetDukeQuest(target, ToDukeQuestInternalId(targetQuest));
-                    SendReply(player, Prefix + $"Reset The Duke quest chain to {targetQuest} for {target.displayName}.");
-                    return;
-                }
-
-                if (!quests.ContainsKey(targetQuest))
-                {
-                    SendReply(player, Prefix + "Usage: /questreset <questId|The Duke> [player name|steamId|me]");
-                    return;
-                }
-
-                target = ResolvePlayerTarget(player, args.Length > 1 ? args[1] : "me");
-                if (target == null)
-                {
-                    SendReply(player, Prefix + "Target player not found.");
-                    return;
-                }
-            }
-
-            activeQuests[target.userID] = new QuestProgress { QuestId = targetQuest, Started = true };
-            SavePlayerData();
-
-            if (target.IsConnected)
-            {
-                CuiHelper.DestroyUi(target, UiRoot);
-                CuiHelper.DestroyUi(target, QuestCompleteRoot);
-
-                questUiVisible.Remove(target.userID);
-                questCompleteVisible.Remove(target.userID);
-
-                DrawUI(target);
-                questUiVisible.Add(target.userID);
-            }
-
-            SendReply(player, Prefix + $"Reset quest progress to Quest {targetQuest} for {target.displayName}.");
-        }
-
-        private void ResetDukeQuest(BasePlayer target)
-        {
-            if (target == null)
-            {
-                return;
-            }
-
-            var quest = BuildDukeQuest(DukeQuestFirstId);
-            dukeQuests[target.userID] = new QuestProgress { QuestId = quest.Id, Started = true };
-            SaveDukeData();
-
-            if (target.IsConnected)
-            {
-                CuiHelper.DestroyUi(target, UiRoot);
-                questUiVisible.Remove(target.userID);
-                dukeUiVisible.Remove(target.userID);
-
-                DrawDukeUI(target, GetDukeProgress(target), quest);
-                dukeUiVisible.Add(target.userID);
-            }
-        }
-
-        private void ResetDukeQuest(BasePlayer target, int questId)
-        {
-            if (target == null)
-            {
-                return;
-            }
-
-            var quest = BuildDukeQuest(questId);
-            dukeQuests[target.userID] = new QuestProgress { QuestId = quest.Id, Started = true };
-            SaveDukeData();
-
-            if (target.IsConnected)
-            {
-                CuiHelper.DestroyUi(target, UiRoot);
-                questUiVisible.Remove(target.userID);
-                dukeUiVisible.Remove(target.userID);
-
-                DrawDukeUI(target, GetDukeProgress(target), quest);
-                dukeUiVisible.Add(target.userID);
-            }
-        }
-
-        private void ForceCompleteQuest(BasePlayer target, int questId)
-        {
-            if (target == null || !quests.TryGetValue(questId, out var quest))
-                return;
-
-            // Clear existing UI immediately so the completion overlay doesn't overlap with any open quest panel
-            CuiHelper.DestroyUi(target, UiRoot);
-            questUiVisible.Remove(target.userID);
-            CuiHelper.DestroyUi(target, QuestCompleteRoot);
-            questCompleteVisible.Remove(target.userID);
-
-            var progress = GetProgress(target);
-            progress.QuestId = questId;
-            progress.Progress = new Dictionary<string, int>();
-            progress.Completed = false;
-            progress.RewardPending = false;
-            progress.Started = true;
-            SavePlayerData();
-
-            if (!HasSpaceForRewards(target, quest))
-            {
-                SendReply(target, Prefix + InvFullMsg);
-                return;
-            }
-
-            if (rewardDelayPending.Contains(target.userID))
-                return;
-
-            rewardDelayPending.Add(target.userID);
-            progress.RewardPending = true;
-            SavePlayerData();
-
-            timer.Once(RewardDelaySeconds, () =>
-            {
-                rewardDelayPending.Remove(target.userID);
-
-                if (target == null || !target.IsConnected)
-                    return;
-
-                GiveRewards(target, quest);
-
-                progress.Completed = true;
-                progress.RewardPending = false;
-                SavePlayerData();
-
-                CuiHelper.DestroyUi(target, UiRoot);
-                questUiVisible.Remove(target.userID);
-
-                PlayQuestCompleteSound(target);
-                CuiHelper.DestroyUi(target, QuestCompleteRoot);
-                questCompleteVisible.Remove(target.userID);
-                DrawQuestCompleteUI(target, quest);
-                questCompleteVisible.Add(target.userID);
-
-                if (quests.ContainsKey(questId + 1))
-                {
-                    progress.QuestId = questId + 1;
-                    progress.Progress = new Dictionary<string, int>();
-                    progress.Completed = false;
-                    progress.RewardPending = false;
-                    SavePlayerData();
-                }
-            });
-        }
-
-        private void ForceCompleteDukeQuest(BasePlayer target, int questId)
-        {
-            if (target == null)
-                return;
-
-            var quest = BuildDukeQuest(questId);
-
-            CuiHelper.DestroyUi(target, UiRoot);
-            dukeUiVisible.Remove(target.userID);
-            CuiHelper.DestroyUi(target, DukeCompleteRoot);
-            dukeCompleteVisible.Remove(target.userID);
-
-            var progress = GetDukeProgress(target);
-            progress.QuestId = quest.Id;
-            progress.Progress = new Dictionary<string, int>();
-            progress.Completed = false;
-            progress.RewardPending = false;
-            progress.Started = true;
-            SaveDukeData();
-
-            foreach (var req in quest.Requirements)
-            {
-                progress.Progress[req.Key] = req.Value;
-            }
-
-            TryFinishDukeQuest(target, progress, quest);
-        }
-
-        [ChatCommand("questcomplete")]
-        private void CmdQuestComplete(BasePlayer player, string cmd, string[] args)
-        {
-            if (!IsAdmin(player)) return;
-
-            if (args.Length == 0 || !int.TryParse(args[0], out var questId))
-            {
-                SendReply(player, Prefix + "Usage: /questcomplete <questId> [player name|steamId|me]");
-                return;
-            }
-
-            var target = ResolvePlayerTarget(player, args.Length > 1 ? args[1] : "me");
-            if (target == null)
-            {
-                SendReply(player, Prefix + "Target player not found.");
-                return;
-            }
-
-            if (quests.ContainsKey(questId))
-            {
-                ForceCompleteQuest(target, questId);
-                SendReply(player, Prefix + $"Forced completion of Quest {questId} for {target.displayName}.");
-                return;
-            }
-
-            if (IsDukeQuestId(questId))
-            {
-                ForceCompleteDukeQuest(target, ToDukeQuestInternalId(questId));
-                SendReply(player, Prefix + $"Forced completion of The Duke Quest {questId} for {target.displayName}.");
-                return;
-            }
-
-            SendReply(player, Prefix + "Usage: /questcomplete <questId> [player name|steamId|me]");
-        }
-
-        // =========================
-        // UI (QUEST)
-        private void DrawUI(BasePlayer player)
-        {
-            var progress = GetProgress(player);
-            if (!quests.TryGetValue(progress.QuestId, out var quest))
-            {
-                SendReply(player, Prefix + DevPlaceholderMsg);
-                return;
-            }
-
-            DrawQuestUi(player, progress, quest);
-        }
-
-        private void DrawDukeUI(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            DrawQuestUi(player, progress, quest);
-        }
-
-        private void DrawQuestUi(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            CuiHelper.DestroyUi(player, UiRoot);
-
-            var lines = BuildDescriptionLines(quest);
-
-            float parchmentHeight = Mathf.Max(LineHeight * 2, lines.Count * LineHeight);
-            float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
-
-            var c = new CuiElementContainer();
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" }
-            }, "Hud", UiRoot);
+            var ui = new CuiElementContainer();
 
             float currentTop = 1f;
 
-            c.Add(new CuiPanel
+            ui.Add(new CuiPanel
             {
                 Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
                 RectTransform = { AnchorMin = $"0 {currentTop - QuestBarHeight}", AnchorMax = $"1 {currentTop}" }
-            }, UiRoot, QuestBar);
+            }, "Hud", UiRoot);
 
-            c.Add(new CuiLabel
+            ui.Add(new CuiLabel
             {
-                Text = { Text = quest.Title, FontSize = QuestFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
+                Text = { Text = questTitle, FontSize = QuestFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestBar);
+            }, UiRoot, QuestBar);
 
             currentTop -= QuestBarHeight;
 
-            c.Add(new CuiPanel
+            ui.Add(new CuiPanel
             {
                 Image = { Color = $"0.85 0.78 0.63 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - parchmentHeight}", AnchorMax = $"1 {currentTop}" }
+                RectTransform = { AnchorMin = $"0 {currentTop - ParchmentHeight}", AnchorMax = $"1 {currentTop}" }
             }, UiRoot, Parchment);
 
-            float textHeight = lines.Count * LineHeight;
-            float padding = (parchmentHeight - textHeight) / 2f;
-            float startY = 1f - (padding / parchmentHeight);
-
-            for (int i = 0; i < lines.Count; i++)
+            var lines = questLines;
+            float lineHeight = LineHeight;
+            float offset = 0f;
+            for (var i = 0; i < lines.Count; i++)
             {
-                float yMax = startY - (i * LineHeight / parchmentHeight);
-                float yMin = yMax - (LineHeight / parchmentHeight);
-
-                c.Add(new CuiLabel
+                var line = lines[i];
+                ui.Add(new CuiLabel
                 {
-                    Text = { Text = lines[i], FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
-                    RectTransform = { AnchorMin = $"0 {yMin}", AnchorMax = $"1 {yMax}" }
+                    Text = { Text = line, FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
+                    RectTransform = { AnchorMin = $"0 {offset}", AnchorMax = $"1 {offset + lineHeight}" }
                 }, Parchment);
+                offset += lineHeight;
             }
 
-            currentTop -= parchmentHeight;
+            currentTop -= ParchmentHeight;
 
-            c.Add(new CuiPanel
+            ui.Add(new CuiPanel
             {
                 Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
                 RectTransform = { AnchorMin = $"0 {currentTop - GoalBarHeight}", AnchorMax = $"1 {currentTop}" }
             }, UiRoot, GoalBar);
 
-            c.Add(new CuiLabel
+            ui.Add(new CuiLabel
             {
                 Text = { Text = BuildGoalText(progress, quest), FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
             }, GoalBar);
 
-            CuiHelper.AddUi(player, c);
+            currentTop -= GoalBarHeight;
+
+            ui.Add(new CuiPanel
+            {
+                Image = { Color = "0 0 0 0" },
+                RectTransform = { AnchorMin = $"0 {currentTop - GoalBarHeight}", AnchorMax = $"1 {currentTop}" }
+            }, UiRoot, $"{GoalBar}.Spacer");
+
+            ui.Add(new CuiLabel
+            {
+                Text = { Text = rewardLine, FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, $"{GoalBar}.Spacer");
+
+            CuiHelper.AddUi(player, ui);
+
+            questUiVisible.Add(player.userID);
         }
 
-        // =========================
-        // UI (QUEST COMPLETE)
-        // =========================
+        private void DrawDukeUI(BasePlayer player, QuestProgress progress, QuestDefinition quest)
+        {
+            if (player == null || quest == null)
+                return;
+
+            CuiHelper.DestroyUi(player, UiRoot);
+            dukeUiVisible.Remove(player.userID);
+
+            var questTitle = quest.Title;
+            var questLines = BuildDescriptionLines(quest);
+
+            var ui = new CuiElementContainer();
+
+            float currentTop = 1f;
+
+            ui.Add(new CuiPanel
+            {
+                Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
+                RectTransform = { AnchorMin = $"0 {currentTop - QuestBarHeight}", AnchorMax = $"1 {currentTop}" }
+            }, "Hud", UiRoot);
+
+            ui.Add(new CuiLabel
+            {
+                Text = { Text = questTitle, FontSize = QuestFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, UiRoot, QuestBar);
+
+            currentTop -= QuestBarHeight;
+
+            ui.Add(new CuiPanel
+            {
+                Image = { Color = $"0.85 0.78 0.63 {UiAlpha}" },
+                RectTransform = { AnchorMin = $"0 {currentTop - ParchmentHeight}", AnchorMax = $"1 {currentTop}" }
+            }, UiRoot, Parchment);
+
+            var lines = questLines;
+            float lineHeight = LineHeight;
+            float offset = 0f;
+            for (var i = 0; i < lines.Count; i++)
+            {
+                var line = lines[i];
+                ui.Add(new CuiLabel
+                {
+                    Text = { Text = line, FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
+                    RectTransform = { AnchorMin = $"0 {offset}", AnchorMax = $"1 {offset + lineHeight}" }
+                }, Parchment);
+                offset += lineHeight;
+            }
+
+            currentTop -= ParchmentHeight;
+
+            ui.Add(new CuiPanel
+            {
+                Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
+                RectTransform = { AnchorMin = $"0 {currentTop - GoalBarHeight}", AnchorMax = $"1 {currentTop}" }
+            }, UiRoot, GoalBar);
+
+            ui.Add(new CuiLabel
+            {
+                Text = { Text = BuildGoalText(progress, quest), FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, GoalBar);
+
+            CuiHelper.AddUi(player, ui);
+
+            dukeUiVisible.Add(player.userID);
+        }
+
         private void DrawQuestCompleteUI(BasePlayer player, QuestDefinition completedQuest)
         {
             CuiHelper.DestroyUi(player, QuestCompleteRoot);
-
-            float parchmentHeight = 2 * LineHeight;
-            float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
+            questCompleteVisible.Remove(player.userID);
 
             var c = new CuiElementContainer();
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" }
-            }, "Hud", QuestCompleteRoot);
-
             float currentTop = 1f;
 
             c.Add(new CuiPanel
             {
                 Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
                 RectTransform = { AnchorMin = $"0 {currentTop - QuestBarHeight}", AnchorMax = $"1 {currentTop}" }
-            }, QuestCompleteRoot, QuestCompleteTop);
+            }, "Hud", QuestCompleteRoot);
 
             c.Add(new CuiLabel
             {
                 Text = { Text = "QUEST COMPLETE", FontSize = QuestFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteTop);
+            }, QuestCompleteRoot, QuestCompleteTop);
 
             currentTop -= QuestBarHeight;
 
             c.Add(new CuiPanel
             {
                 Image = { Color = $"0.85 0.78 0.63 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - parchmentHeight}", AnchorMax = $"1 {currentTop}" }
+                RectTransform = { AnchorMin = $"0 {currentTop - ParchmentHeight}", AnchorMax = $"1 {currentTop}" }
             }, QuestCompleteRoot, QuestCompleteParchment);
 
             c.Add(new CuiLabel
             {
-                Text = { Text = "Rewards Received:", FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
-                RectTransform = { AnchorMin = "0 0.5", AnchorMax = "1 1" }
+                Text = { Text = completedQuest.Title, FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
             }, QuestCompleteParchment);
 
-            c.Add(new CuiLabel
-            {
-                Text = { Text = BuildRewardLine(completedQuest), FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 0.5" }
-            }, QuestCompleteParchment);
-
-            currentTop -= parchmentHeight;
+            currentTop -= ParchmentHeight;
 
             c.Add(new CuiPanel
             {
@@ -1961,11 +1370,10 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = $"0 {currentTop - GoalBarHeight}", AnchorMax = $"1 {currentTop}" }
             }, QuestCompleteRoot, QuestCompleteBottom);
 
-            c.Add(new CuiButton
+            c.Add(new CuiLabel
             {
-                Button = { Command = "quests.complete.next", Color = "0.35 0.10 0.10 0.85" },
                 Text = { Text = "Next Quest", FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
-                RectTransform = { AnchorMin = "0.40 0.10", AnchorMax = "0.60 0.80" }
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
             }, QuestCompleteBottom);
 
             CuiHelper.AddUi(player, c);
@@ -1974,38 +1382,29 @@ namespace Oxide.Plugins
         private void ShowDukeQuestCompleteUI(BasePlayer player, QuestDefinition completedQuest)
         {
             CuiHelper.DestroyUi(player, DukeCompleteRoot);
-
-            float parchmentHeight = 2 * LineHeight;
-            float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
+            dukeCompleteVisible.Remove(player.userID);
 
             var c = new CuiElementContainer();
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" }
-            }, "Hud", DukeCompleteRoot);
-
             float currentTop = 1f;
 
             c.Add(new CuiPanel
             {
                 Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
                 RectTransform = { AnchorMin = $"0 {currentTop - QuestBarHeight}", AnchorMax = $"1 {currentTop}" }
-            }, DukeCompleteRoot, QuestCompleteTop);
+            }, "Hud", DukeCompleteRoot);
 
             c.Add(new CuiLabel
             {
                 Text = { Text = "QUEST COMPLETE", FontSize = QuestFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteTop);
+            }, DukeCompleteRoot, QuestCompleteTop);
 
             currentTop -= QuestBarHeight;
 
             c.Add(new CuiPanel
             {
                 Image = { Color = $"0.85 0.78 0.63 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - parchmentHeight}", AnchorMax = $"1 {currentTop}" }
+                RectTransform = { AnchorMin = $"0 {currentTop - ParchmentHeight}", AnchorMax = $"1 {currentTop}" }
             }, DukeCompleteRoot, QuestCompleteParchment);
 
             c.Add(new CuiLabel
@@ -2014,7 +1413,7 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
             }, QuestCompleteParchment);
 
-            currentTop -= parchmentHeight;
+            currentTop -= ParchmentHeight;
 
             c.Add(new CuiPanel
             {
@@ -2029,6 +1428,16 @@ namespace Oxide.Plugins
             }, QuestCompleteBottom);
 
             CuiHelper.AddUi(player, c);
+        }
+
+        private void PlayQuestCompleteSound(BasePlayer player)
+        {
+            if (player == null)
+            {
+                return;
+            }
+
+            Effect.server.Run("assets/bundled/prefabs/fx/notice/loot.spawn.effect.prefab", player.transform.position);
         }
 
         // =========================
