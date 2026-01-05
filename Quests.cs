@@ -156,8 +156,8 @@ namespace Oxide.Plugins
         private const int DukeQuestFinalId = DukeQuestItemCount + 1;
         private const int DukeQuestIdOffset = 9000;
         private const string DukePriceCommand = "swear fealty";
-        private const string EsquirePermission = "guishop.use";
-        private const string EsquireTitlePermission = "duke.esquire";
+        private const string EsquirePermission = "quests.guishop.use";
+        private const string EsquireTitlePermission = "quests.duke.esquire";
 
         private static readonly string[] DukeRequiredItems =
         {
@@ -335,8 +335,8 @@ namespace Oxide.Plugins
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "wood", Amount = 500 },
-                    new QuestReward { ShortName = "stones", Amount = 500 }
+                    new QuestReward { ShortName = "woodtea", Amount = 1 },
+                    new QuestReward { ShortName = "oretea", Amount = 1 }
                 }
             };
 
@@ -397,8 +397,7 @@ namespace Oxide.Plugins
                 Description = "Claim thy land and raise a humble shelter to rest within.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["tc_auth"] = 1,
-                    ["building_block"] = 4
+                    ["tc_auth"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
@@ -413,7 +412,8 @@ namespace Oxide.Plugins
                 Description = "Build small boxes to guard thy goods from loss and decay.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["box.wooden.crafted"] = 2
+                    ["box.wooden.crafted"] = 2,
+                    ["box.wooden.placed"] = 2
                 },
                 Rewards = new List<QuestReward>
                 {
@@ -433,7 +433,7 @@ namespace Oxide.Plugins
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "lantern", Amount = 1 },
+                    new QuestReward { ShortName = "torchholder", Amount = 1 },
                     new QuestReward { ShortName = "rug", Amount = 1 }
                 }
             };
@@ -508,11 +508,11 @@ namespace Oxide.Plugins
                 Description = "Render fuel from beast and cloth to feed the flame.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["lowgradefuel"] = 20
+                    ["lowgradefuel"] = 50
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "lowgradefuel", Amount = 50 }
+                    new QuestReward { ShortName = "lowgradefuel", Amount = 100 }
                 }
             };
 
@@ -527,82 +527,159 @@ namespace Oxide.Plugins
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "metal.fragments", Amount = 200 }
+                    new QuestReward { ShortName = "furnace", Amount = 1 }
                 }
             };
 
             quests[14] = new QuestDefinition
             {
                 Id = 14,
-                Title = "Quest 14 — Smelting",
-                Description = "Smelt thy first fragments of metal.",
+                Title = "Quest 14 — Metal Ore",
+                Description = "Mine metal ore and prepare for the fire.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["metal.fragments"] = 200
+                    ["metal.ore"] = 500
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "metal.fragments", Amount = 200 }
+                    new QuestReward { ShortName = "oretea", Amount = 1 }
                 }
             };
 
             quests[15] = new QuestDefinition
             {
                 Id = 15,
-                Title = "Quest 15 — Workbench",
-                Description = "Build a workbench and expand thy craft.",
+                Title = "Quest 15 — Smelting",
+                Description = "Smelt metal ore into useful fragments.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["workbench1"] = 1
+                    ["metal.fragments"] = 500
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "workbench1", Amount = 1 }
+                    new QuestReward { ShortName = "metal.fragments", Amount = 500 }
                 }
             };
 
             quests[16] = new QuestDefinition
             {
                 Id = 16,
-                Title = "Quest 16 — Doors",
-                Description = "Craft a door and keep thy dwelling safe.",
+                Title = "Quest 16 — Better Door",
+                Description = "Craft and place a sturdy metal door.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["door.hinged.wood"] = 1
+                    ["door.hinged.metal"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "lock.key", Amount = 1 }
+                    new QuestReward { ShortName = "pie.fish", Amount = 1 }
                 }
             };
 
             quests[17] = new QuestDefinition
             {
                 Id = 17,
-                Title = "Quest 17 — Lighting",
-                Description = "Craft a lantern to light thy home.",
+                Title = "Quest 17 — Repairs",
+                Description = "Craft a repair bench to mend thy tools.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["lantern"] = 1
+                    ["repair.bench"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "lantern", Amount = 1 }
+                    new QuestReward { ShortName = "blueprint.fragment.basic", Amount = 1 }
                 }
             };
 
             quests[18] = new QuestDefinition
             {
                 Id = 18,
-                Title = "Quest 18 — Recycler",
-                Description = "Use a recycler to reclaim useful scraps.",
+                Title = "Quest 18 — Road Looting",
+                Description = "Craft a machete and smash a road barrel.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["machete"] = 1,
+                    ["road.barrel"] = 1
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "scrap", Amount = 25 }
+                }
+            };
+
+            quests[19] = new QuestDefinition
+            {
+                Id = 19,
+                Title = "Quest 19 — Scrap Run",
+                Description = "Loot the roadside and gather scrap.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["scrap"] = 75
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "scrap", Amount = 25 }
+                }
+            };
+
+            quests[20] = new QuestDefinition
+            {
+                Id = 20,
+                Title = "Quest 20 — Recycling",
+                Description = "Use a recycler at a monument.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["recycler_use"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "scrap", Amount = 50 }
+                    new QuestReward { ShortName = "blueprint.fragment.basic", Amount = 1 }
+                }
+            };
+
+            quests[21] = new QuestDefinition
+            {
+                Id = 21,
+                Title = "Quest 21 — Workbench",
+                Description = "Craft a workbench to expand thy craft.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["workbench1"] = 1
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "blueprint.fragment.basic", Amount = 2 }
+                }
+            };
+
+            quests[22] = new QuestDefinition
+            {
+                Id = 22,
+                Title = "Quest 22 — Research",
+                Description = "Craft a research table.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["research.table"] = 1
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "blueprint.fragment.basic", Amount = 1 }
+                }
+            };
+
+            quests[23] = new QuestDefinition
+            {
+                Id = 23,
+                Title = "Quest 23 — Engineering",
+                Description = "Craft an engineering workbench for advanced craft.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["iotable"] = 1
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "metal.fragments", Amount = 500 },
+                    new QuestReward { ShortName = "metal.refined", Amount = 50 }
                 }
             };
 
@@ -977,7 +1054,9 @@ namespace Oxide.Plugins
         private void EvaluateQuestProgressFulfillment(BasePlayer player, QuestProgress progress, QuestDefinition quest)
         {
             if (questUiVisible.Contains(player.userID))
-                DrawUI(player);
+            {
+                DrawQuestUi(player, progress, quest);
+            }
 
             if (!HasMetAllRequirements(progress, quest))
                 return;
@@ -1369,6 +1448,22 @@ namespace Oxide.Plugins
                 Prefix + "Starting quests complete! Do /quest to further your adventures!");
         }
 
+        [ConsoleCommand("quests.complete.duke.next")]
+        private void CmdQuestCompleteDukeNext(ConsoleSystem.Arg arg)
+        {
+            var player = arg.Player();
+            if (player == null) return;
+
+            CuiHelper.DestroyUi(player, DukeCompleteRoot);
+            dukeCompleteVisible.Remove(player.userID);
+
+            if (TryGetActiveDukeQuest(player, out var dukeProgress, out var dukeQuest))
+            {
+                DrawDukeUI(player, dukeProgress, dukeQuest);
+                dukeUiVisible.Add(player.userID);
+            }
+        }
+
         // =========================
         // COMMANDS
         // =========================
@@ -1385,7 +1480,7 @@ namespace Oxide.Plugins
                 SavePlayerData();
             }
 
-            if (args.Length > 0)
+            if (args != null && args.Length > 0)
             {
                 if (!progress.Completed)
                 {
@@ -1553,9 +1648,23 @@ namespace Oxide.Plugins
         {
             if (!IsAdmin(player)) return;
 
-            if (args.Length == 0)
+            if (args == null || args.Length == 0)
             {
-                SendReply(player, Prefix + "Usage: /questreset <questId|The Duke> [player name|steamId|me]");
+                if (TryGetActiveDukeQuest(player, out var dukeProgress, out _))
+                {
+                    ResetDukeQuest(player, dukeProgress.QuestId);
+                    SendReply(player, Prefix + $"Reset The Duke quest {DukeQuestIdOffset + dukeProgress.QuestId} for {player.displayName}.");
+                    return;
+                }
+
+                if (TryGetActiveQuest(player, out var progress, out _))
+                {
+                    ResetQuest(player, progress.QuestId);
+                    SendReply(player, Prefix + $"Reset quest {progress.QuestId} for {player.displayName}.");
+                    return;
+                }
+
+                SendReply(player, Prefix + "No active quest to reset.");
                 return;
             }
 
@@ -1682,9 +1791,23 @@ namespace Oxide.Plugins
         {
             if (!IsAdmin(player)) return;
 
-            if (args.Length == 0)
+            if (args == null || args.Length == 0)
             {
-                SendReply(player, Prefix + "Usage: /questcomplete <questId|The Duke> [player name|steamId|me]");
+                if (TryGetActiveDukeQuest(player, out var dukeProgress, out _))
+                {
+                    ForceCompleteDukeQuest(player, dukeProgress.QuestId);
+                    SendReply(player, Prefix + $"Completed The Duke Quest {DukeQuestIdOffset + dukeProgress.QuestId} for {player.displayName}.");
+                    return;
+                }
+
+                if (TryGetActiveQuest(player, out var progress, out _))
+                {
+                    ForceCompleteQuest(player, progress.QuestId);
+                    SendReply(player, Prefix + $"Completed quest {progress.QuestId} for {player.displayName}.");
+                    return;
+                }
+
+                SendReply(player, Prefix + "No active quest to complete.");
                 return;
             }
 
@@ -1860,6 +1983,12 @@ namespace Oxide.Plugins
                 UpdateInventoryTrackedProgress(player, progress, quest);
             }
 
+            if (HasMetAllRequirements(progress, quest))
+            {
+                TryFinishQuest(player, progress, quest);
+                return;
+            }
+
             DrawQuestUi(player, progress, quest);
         }
 
@@ -1955,7 +2084,8 @@ namespace Oxide.Plugins
             c.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" }
+                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" },
+                CursorEnabled = true
             }, "Hud", QuestCompleteRoot);
 
             float currentTop = 1f;
@@ -1996,15 +2126,10 @@ namespace Oxide.Plugins
 
             c.Add(new CuiButton
             {
-                Button = { Color = "0 0 0 0", Command = "quests.complete.next" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteBottom);
-
-            c.Add(new CuiLabel
-            {
-                Text = { Text = "Next Quest", FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteBottom);
+                Button = { Color = "0 0 0 0", Command = "quests.complete.next", Close = QuestCompleteRoot },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+                Text = { Text = "Next Quest", FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" }
+            }, QuestCompleteBottom, "QuestsUI.CompleteBottom.Button");
 
             CuiHelper.AddUi(player, c);
         }
@@ -2021,7 +2146,8 @@ namespace Oxide.Plugins
             c.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" }
+                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" },
+                CursorEnabled = true
             }, "Hud", DukeCompleteRoot);
 
             float currentTop = 1f;
@@ -2060,11 +2186,12 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = $"0 {currentTop - GoalBarHeight}", AnchorMax = $"1 {currentTop}" }
             }, DukeCompleteRoot, QuestCompleteBottom);
 
-            c.Add(new CuiLabel
+            c.Add(new CuiButton
             {
-                Text = { Text = "Next Quest", FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteBottom);
+                Button = { Color = "0 0 0 0", Command = "quests.complete.duke.next", Close = DukeCompleteRoot },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+                Text = { Text = "Next Quest", FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" }
+            }, QuestCompleteBottom, "QuestsUI.CompleteBottom.Button");
 
             CuiHelper.AddUi(player, c);
         }
