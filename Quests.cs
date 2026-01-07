@@ -338,7 +338,7 @@ namespace Oxide.Plugins
             quests[1] = new QuestDefinition
             {
                 Id = 1,
-                Title = "Quest 1 – Getting Started",
+                Title = "Quest I – Getting Started",
                 Description = "Take up thy rock and gather wood and stone, the first toil of any survivor.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -355,7 +355,7 @@ namespace Oxide.Plugins
             quests[2] = new QuestDefinition
             {
                 Id = 2,
-                Title = "Quest 2 — Stone Tools",
+                Title = "Quest II — Stone Tools",
                 Description = "Shape stone into tools, that thy labor be swifter and surer.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -372,7 +372,7 @@ namespace Oxide.Plugins
             quests[3] = new QuestDefinition
             {
                 Id = 3,
-                Title = "Quest 3 — Gather Supplies",
+                Title = "Quest III — Gather Supplies",
                 Description = "Fill thy stores with wood and stone, for greater works soon follow.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -389,7 +389,7 @@ namespace Oxide.Plugins
             quests[4] = new QuestDefinition
             {
                 Id = 4,
-                Title = "Quest 4 — Builder’s Tools",
+                Title = "Quest IV — Builder’s Tools",
                 Description = "Craft the tools of builders, and prepare to raise shelter.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -405,7 +405,7 @@ namespace Oxide.Plugins
             quests[5] = new QuestDefinition
             {
                 Id = 5,
-                Title = "Quest 5 — Claim and Build",
+                Title = "Quest V — Claim and Build",
                 Description = "Claim thy land and raise a humble shelter to rest within.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -420,7 +420,7 @@ namespace Oxide.Plugins
             quests[6] = new QuestDefinition
             {
                 Id = 6,
-                Title = "Quest 6 — Storage",
+                Title = "Quest VI — Storage",
                 Description = "Build small boxes to guard thy goods from loss and decay.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -435,7 +435,7 @@ namespace Oxide.Plugins
             quests[7] = new QuestDefinition
             {
                 Id = 7,
-                Title = "Quest 7 — Secure the Door",
+                Title = "Quest VII — Secure the Door",
                 Description = "Bar thy home with lock and door, and keep danger without.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -452,7 +452,7 @@ namespace Oxide.Plugins
             quests[8] = new QuestDefinition
             {
                 Id = 8,
-                Title = "Quest 8 — Cloth Gathering",
+                Title = "Quest VIII — Cloth Gathering",
                 Description = "Gather cloth from field and foe, for craft and comfort.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -467,7 +467,7 @@ namespace Oxide.Plugins
             quests[9] = new QuestDefinition
             {
                 Id = 9,
-                Title = "Quest 9 — Simple Clothing",
+                Title = "Quest IX — Simple Clothing",
                 Description = "Stitch simple garb to shield thy flesh from harm.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -484,7 +484,7 @@ namespace Oxide.Plugins
             quests[10] = new QuestDefinition
             {
                 Id = 10,
-                Title = "Quest 10 — First Weapon",
+                Title = "Quest X — First Weapon",
                 Description = "Craft bow and arrow, and learn to strike from afar.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -500,7 +500,7 @@ namespace Oxide.Plugins
             quests[11] = new QuestDefinition
             {
                 Id = 11,
-                Title = "Quest 11 — Hunting",
+                Title = "Quest XI — Hunting",
                 Description = "Hunt the wild boar and prove thy strength.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -515,7 +515,7 @@ namespace Oxide.Plugins
             quests[12] = new QuestDefinition
             {
                 Id = 12,
-                Title = "Quest 12 — Low Grade Fuel",
+                Title = "Quest XII — Low Grade Fuel",
                 Description = "Render fuel from beast and cloth to feed the flame.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -530,7 +530,7 @@ namespace Oxide.Plugins
             quests[13] = new QuestDefinition
             {
                 Id = 13,
-                Title = "Quest 13 — Furnace",
+                Title = "Quest XIII — Furnace",
                 Description = "Shape stone into a furnace for smelting ore.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -545,7 +545,7 @@ namespace Oxide.Plugins
             quests[14] = new QuestDefinition
             {
                 Id = 14,
-                Title = "Quest 14 — Metal Ore",
+                Title = "Quest XIV — Metal Ore",
                 Description = "Mine metal ore from the earth and prepare to refine it.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -560,7 +560,7 @@ namespace Oxide.Plugins
             quests[15] = new QuestDefinition
             {
                 Id = 15,
-                Title = "Quest 15 — Smelting",
+                Title = "Quest XV — Smelting",
                 Description = "Smelt ore into metal fragments.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -575,7 +575,7 @@ namespace Oxide.Plugins
             quests[16] = new QuestDefinition
             {
                 Id = 16,
-                Title = "Quest 16 — Better Door",
+                Title = "Quest XVI — Better Door",
                 Description = "Forge a metal door and secure thy home.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -590,7 +590,7 @@ namespace Oxide.Plugins
             quests[17] = new QuestDefinition
             {
                 Id = 17,
-                Title = "Quest 17 — Repairs",
+                Title = "Quest XVII — Repairs",
                 Description = "Craft a repair bench and keep thy gear in shape.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -605,7 +605,7 @@ namespace Oxide.Plugins
             quests[18] = new QuestDefinition
             {
                 Id = 18,
-                Title = "Quest 18 — Road Looting",
+                Title = "Quest XVIII — Road Looting",
                 Description = "Break barrels on the road and claim their spoils.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -620,7 +620,7 @@ namespace Oxide.Plugins
             quests[19] = new QuestDefinition
             {
                 Id = 19,
-                Title = "Quest 19 — Scrap Run",
+                Title = "Quest XIX — Scrap Run",
                 Description = "Gather scrap from the road and prepare for research.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -635,7 +635,7 @@ namespace Oxide.Plugins
             quests[20] = new QuestDefinition
             {
                 Id = 20,
-                Title = "Quest 20 — Recycling",
+                Title = "Quest XX — Recycling",
                 Description = "Use the recycler to break down unwanted items.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -650,7 +650,7 @@ namespace Oxide.Plugins
             quests[21] = new QuestDefinition
             {
                 Id = 21,
-                Title = "Quest 21 — Workbench",
+                Title = "Quest XXI — Workbench",
                 Description = "Craft a workbench level 1.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -665,7 +665,7 @@ namespace Oxide.Plugins
             quests[22] = new QuestDefinition
             {
                 Id = 22,
-                Title = "Quest 22 — Research",
+                Title = "Quest XXII — Research",
                 Description = "Craft a research table to unlock blueprints.",
                 Requirements = new Dictionary<string, int>
                 {
@@ -680,7 +680,7 @@ namespace Oxide.Plugins
             quests[23] = new QuestDefinition
             {
                 Id = 23,
-                Title = "Quest 23 — Engineering",
+                Title = "Quest XXIII — Engineering",
                 Description = "Craft an engineering workbench for advanced craft.",
                 Requirements = new Dictionary<string, int>
                 {
