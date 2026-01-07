@@ -44,6 +44,7 @@ namespace Oxide.Plugins
         {
             public int QuestId;
             public Dictionary<string, int> Progress = new Dictionary<string, int>();
+            public Dictionary<string, int> InventoryBaseline = new Dictionary<string, int>();
             public bool Completed;
             public bool RewardPending;
             public bool Started;
@@ -158,6 +159,7 @@ namespace Oxide.Plugins
         private const string DukePriceCommand = "swear fealty";
         private const string EsquirePermission = "quests.guishop.use";
         private const string EsquireTitlePermission = "quests.duke.esquire";
+
 
         private static readonly string[] DukeRequiredItems =
         {
@@ -412,8 +414,7 @@ namespace Oxide.Plugins
                 Description = "Build small boxes to guard thy goods from loss and decay.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["box.wooden.crafted"] = 2,
-                    ["box.wooden.placed"] = 2
+                    ["box.wooden.crafted"] = 2
                 },
                 Rewards = new List<QuestReward>
                 {
@@ -433,7 +434,7 @@ namespace Oxide.Plugins
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "torchholder", Amount = 1 },
+                    new QuestReward { ShortName = "lantern", Amount = 1 },
                     new QuestReward { ShortName = "rug", Amount = 1 }
                 }
             };
@@ -508,7 +509,7 @@ namespace Oxide.Plugins
                 Description = "Render fuel from beast and cloth to feed the flame.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["lowgradefuel"] = 50
+                    ["lowgradefuel"] = 100
                 },
                 Rewards = new List<QuestReward>
                 {
@@ -520,7 +521,7 @@ namespace Oxide.Plugins
             {
                 Id = 13,
                 Title = "Quest 13 — Furnace",
-                Description = "Craft a furnace and begin the art of smelting.",
+                Description = "Shape stone into a furnace for smelting ore.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["furnace.placed"] = 1
@@ -535,7 +536,7 @@ namespace Oxide.Plugins
             {
                 Id = 14,
                 Title = "Quest 14 — Metal Ore",
-                Description = "Mine metal ore and prepare for the fire.",
+                Description = "Mine metal ore from the earth and prepare to refine it.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["metal.ore"] = 500
@@ -550,7 +551,7 @@ namespace Oxide.Plugins
             {
                 Id = 15,
                 Title = "Quest 15 — Smelting",
-                Description = "Smelt metal ore into useful fragments.",
+                Description = "Smelt ore into metal fragments.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["metal.fragments"] = 500
@@ -565,7 +566,7 @@ namespace Oxide.Plugins
             {
                 Id = 16,
                 Title = "Quest 16 — Better Door",
-                Description = "Craft and place a sturdy metal door.",
+                Description = "Forge a metal door and secure thy home.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["door.hinged.metal"] = 1
@@ -580,7 +581,7 @@ namespace Oxide.Plugins
             {
                 Id = 17,
                 Title = "Quest 17 — Repairs",
-                Description = "Craft a repair bench to mend thy tools.",
+                Description = "Craft a repair bench and keep thy gear in shape.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["repair.bench"] = 1
@@ -595,11 +596,10 @@ namespace Oxide.Plugins
             {
                 Id = 18,
                 Title = "Quest 18 — Road Looting",
-                Description = "Craft a machete and smash a road barrel.",
+                Description = "Break barrels on the road and claim their spoils.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["machete"] = 1,
-                    ["road.barrel"] = 1
+                    ["road.barrel"] = 6
                 },
                 Rewards = new List<QuestReward>
                 {
@@ -611,10 +611,10 @@ namespace Oxide.Plugins
             {
                 Id = 19,
                 Title = "Quest 19 — Scrap Run",
-                Description = "Loot the roadside and gather scrap.",
+                Description = "Gather scrap from the road and prepare for research.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["scrap"] = 75
+                    ["scrap"] = 50
                 },
                 Rewards = new List<QuestReward>
                 {
@@ -626,7 +626,7 @@ namespace Oxide.Plugins
             {
                 Id = 20,
                 Title = "Quest 20 — Recycling",
-                Description = "Use a recycler at a monument.",
+                Description = "Use the recycler to break down unwanted items.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["recycler_use"] = 1
@@ -641,10 +641,10 @@ namespace Oxide.Plugins
             {
                 Id = 21,
                 Title = "Quest 21 — Workbench",
-                Description = "Craft a workbench to expand thy craft.",
+                Description = "Craft a workbench and unlock advanced recipes.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["workbench1"] = 1
+                    ["workbench2"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
@@ -656,7 +656,7 @@ namespace Oxide.Plugins
             {
                 Id = 22,
                 Title = "Quest 22 — Research",
-                Description = "Craft a research table.",
+                Description = "Craft a research table to unlock blueprints.",
                 Requirements = new Dictionary<string, int>
                 {
                     ["research.table"] = 1
@@ -722,9 +722,9 @@ namespace Oxide.Plugins
             return new QuestDefinition
             {
                 Id = questId,
-                Title = $"The Duke's Proof — {displayName}",
-                Description = $"Craft and carry a {displayName} to prove thy readiness.",
-                Requirements = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                Title = $"The Duke – Bring {displayName}",
+                Description = "Bring the required item to prove thy worth.",
+                Requirements = new Dictionary<string, int>
                 {
                     [requirementItem] = 1
                 },
@@ -732,9 +732,6 @@ namespace Oxide.Plugins
             };
         }
 
-        // =========================
-        // DATA
-        // =========================
         private void LoadPlayerData()
         {
             activeQuests =
@@ -812,6 +809,7 @@ namespace Oxide.Plugins
             {
                 progress.QuestId++;
                 progress.Progress = new Dictionary<string, int>();
+                progress.InventoryBaseline = new Dictionary<string, int>();
                 progress.Completed = false;
                 progress.RewardPending = false;
                 SavePlayerData();
@@ -1072,16 +1070,21 @@ namespace Oxide.Plugins
             UpdateInventoryTrackedProgress(player, progress, quest);
         }
 
-        private void UpdateInventoryTrackedProgress(BasePlayer player, QuestProgress progress, QuestDefinition quest)
+        private void InitializeInventoryBaseline(BasePlayer player, QuestProgress progress, QuestDefinition quest)
         {
             if (player == null || quest == null || !quest.HasInventoryTrackedRequirements)
                 return;
 
-            bool changed = false;
+            if (progress.InventoryBaseline == null)
+                progress.InventoryBaseline = new Dictionary<string, int>();
 
             foreach (var req in quest.Requirements)
             {
-                if (!InventoryTrackedRequirementKeys.Contains(req.Key))
+                var normalizedKey = NormalizeRequirementKey(req.Key);
+                if (!InventoryTrackedRequirementKeys.Contains(normalizedKey))
+                    continue;
+
+                if (progress.InventoryBaseline.ContainsKey(req.Key))
                     continue;
 
                 var def = FindItemDefinitionWithFallback(req.Key);
@@ -1090,7 +1093,38 @@ namespace Oxide.Plugins
 
                 int existing = progress.Progress.TryGetValue(req.Key, out var current) ? current : 0;
                 int total = CountItemAcrossPlayerInventories(player, def);
-                int clamped = Mathf.Min(req.Value, Math.Max(existing, total));
+                int baseline = Math.Max(0, total - existing);
+
+                progress.InventoryBaseline[req.Key] = baseline;
+            }
+        }
+
+        private void UpdateInventoryTrackedProgress(BasePlayer player, QuestProgress progress, QuestDefinition quest)
+        {
+            if (player == null || quest == null || !quest.HasInventoryTrackedRequirements)
+                return;
+
+            bool changed = false;
+
+            InitializeInventoryBaseline(player, progress, quest);
+
+            foreach (var req in quest.Requirements)
+            {
+                var normalizedKey = NormalizeRequirementKey(req.Key);
+                if (!InventoryTrackedRequirementKeys.Contains(normalizedKey))
+                    continue;
+
+                var def = FindItemDefinitionWithFallback(req.Key);
+                if (def == null)
+                    continue;
+
+                int existing = progress.Progress.TryGetValue(req.Key, out var current) ? current : 0;
+                int total = CountItemAcrossPlayerInventories(player, def);
+                int baseline = progress.InventoryBaseline != null && progress.InventoryBaseline.TryGetValue(req.Key, out var storedBaseline)
+                    ? storedBaseline
+                    : 0;
+                int delta = Math.Max(0, total - baseline);
+                int clamped = Mathf.Min(req.Value, Math.Max(existing, delta));
 
                 if (clamped != existing)
                 {
@@ -1221,11 +1255,13 @@ namespace Oxide.Plugins
                 {
                     progress.QuestId++;
                     progress.Progress = new Dictionary<string, int>();
+                    progress.InventoryBaseline = new Dictionary<string, int>();
                     progress.Completed = false;
                     progress.RewardPending = false;
                     SavePlayerData();
 
                     SendReply(player, Prefix + $"Next quest unlocked: {quests[progress.QuestId].Title}");
+                    InitializeInventoryBaseline(player, progress, quests[progress.QuestId]);
                 }
                 else
                 {
@@ -1248,6 +1284,27 @@ namespace Oxide.Plugins
                     questCompleteVisible.Remove(player.userID);
                     DrawQuestCompleteUI(player, quest);
                     questCompleteVisible.Add(player.userID);
+
+                    if (hasNextQuest)
+                    {
+                        timer.Once(UiSwapDelay, () =>
+                        {
+                            if (player == null || !player.IsConnected) return;
+                            CuiHelper.DestroyUi(player, QuestCompleteRoot);
+                            questCompleteVisible.Remove(player.userID);
+                            DrawUI(player);
+                            questUiVisible.Add(player.userID);
+                        });
+                    }
+                    else
+                    {
+                        timer.Once(UiSwapDelay, () =>
+                        {
+                            if (player == null || !player.IsConnected) return;
+                            CuiHelper.DestroyUi(player, QuestCompleteRoot);
+                            questCompleteVisible.Remove(player.userID);
+                        });
+                    }
                 });
             });
         }
@@ -1339,8 +1396,10 @@ namespace Oxide.Plugins
                 return;
             }
 
+            permission.AddUserGroup(player.UserIDString, "esquire");
             permission.GrantUserPermission(player.UserIDString, EsquirePermission, this);
             permission.GrantUserPermission(player.UserIDString, EsquireTitlePermission, this);
+            permission.GrantUserPermission(player.UserIDString, "guishop.use", null);
         }
 
         private bool HasSpaceForRewards(BasePlayer player, QuestDefinition quest)
@@ -1477,8 +1536,11 @@ namespace Oxide.Plugins
             if (!progress.Started)
             {
                 progress.Started = true;
+                progress.InventoryBaseline = new Dictionary<string, int>();
                 SavePlayerData();
             }
+
+            EnsureStarterQuestCompletedForUnlockedChains(player, progress);
 
             if (args != null && args.Length > 0)
             {
@@ -1546,6 +1608,22 @@ namespace Oxide.Plugins
             return chainName.Equals("duke", StringComparison.OrdinalIgnoreCase)
                 || chainName.Equals(DukeChainName, StringComparison.OrdinalIgnoreCase)
                 || chainName.Replace(" ", string.Empty).Equals(DukeChainName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void EnsureStarterQuestCompletedForUnlockedChains(BasePlayer player, QuestProgress progress)
+        {
+            if (player == null || progress == null || progress.Completed)
+                return;
+
+            if (!dukeQuests.TryGetValue(player.userID, out var dukeProgress))
+                return;
+
+            if (!dukeProgress.Started && !dukeProgress.Completed && dukeProgress.QuestId <= DukeQuestFirstId)
+                return;
+
+            progress.Completed = true;
+            progress.RewardPending = false;
+            SavePlayerData();
         }
 
         private bool IsDukePriceCommand(string input)
@@ -1735,6 +1813,7 @@ namespace Oxide.Plugins
 
             progress.QuestId = questId;
             progress.Progress = new Dictionary<string, int>();
+            progress.InventoryBaseline = new Dictionary<string, int>();
             progress.Completed = false;
             progress.RewardPending = false;
             progress.Started = true;
@@ -1784,7 +1863,7 @@ namespace Oxide.Plugins
         }
 
         // =========================
-        // ADMIN COMPLETE COMMAND
+        // FORCE COMPLETE COMMAND
         // =========================
         [ChatCommand("questcomplete")]
         private void CmdQuestComplete(BasePlayer player, string cmd, string[] args)
@@ -1812,12 +1891,12 @@ namespace Oxide.Plugins
             }
 
             BasePlayer target;
-            int questId;
+            int targetQuest;
 
             if (args.Length == 1)
             {
                 target = player;
-                if (!int.TryParse(args[0], out questId))
+                if (!int.TryParse(args[0], out targetQuest))
                 {
                     if (IsDukeChain(args[0]))
                     {
@@ -1839,7 +1918,7 @@ namespace Oxide.Plugins
                     return;
                 }
 
-                if (!int.TryParse(args[0], out questId))
+                if (!int.TryParse(args[0], out targetQuest))
                 {
                     if (IsDukeChain(args[0]))
                     {
@@ -1853,15 +1932,15 @@ namespace Oxide.Plugins
                 }
             }
 
-            if (IsDukeQuestId(questId))
+            if (IsDukeQuestId(targetQuest))
             {
-                ForceCompleteDukeQuest(target, ToDukeQuestInternalId(questId));
-                SendReply(player, Prefix + $"Forced completion of The Duke Quest {questId} for {target.displayName}.");
+                ForceCompleteDukeQuest(target, ToDukeQuestInternalId(targetQuest));
+                SendReply(player, Prefix + $"Forced completion of The Duke Quest {targetQuest} for {target.displayName}.");
             }
             else
             {
-                ForceCompleteQuest(target, questId);
-                SendReply(player, Prefix + $"Forced completion of Quest {questId} for {target.displayName}.");
+                ForceCompleteQuest(target, targetQuest);
+                SendReply(player, Prefix + $"Forced completion of Quest {targetQuest} for {target.displayName}.");
             }
         }
 
@@ -1890,54 +1969,9 @@ namespace Oxide.Plugins
                 progress.Progress[req.Key] = req.Value;
             }
 
-            if (rewardDelayPending.Contains(target.userID))
-                return;
-
-            rewardDelayPending.Add(target.userID);
             SavePlayerData();
 
-            timer.Once(RewardDelaySeconds, () =>
-            {
-                rewardDelayPending.Remove(target.userID);
-
-                if (target == null || !target.IsConnected)
-                    return;
-
-                if (!HasSpaceForRewards(target, quest))
-                {
-                    SendReply(target, Prefix + InvFullMsg);
-                    progress.RewardPending = true;
-                    SavePlayerData();
-                    return;
-                }
-
-                GiveRewards(target, quest);
-
-                if (quests.ContainsKey(progress.QuestId + 1))
-                {
-                    progress.QuestId++;
-                    progress.Progress = new Dictionary<string, int>();
-                    progress.Completed = false;
-                    progress.RewardPending = false;
-                    SavePlayerData();
-
-                    SendReply(target, Prefix + $"Next quest unlocked: {quests[progress.QuestId].Title}");
-                }
-                else
-                {
-                    progress.Completed = true;
-                    progress.RewardPending = false;
-                    SavePlayerData();
-
-                    SendReply(target, BuildStarterCompletionMessage());
-                }
-
-                PlayQuestCompleteSound(target);
-                CuiHelper.DestroyUi(target, QuestCompleteRoot);
-                questCompleteVisible.Remove(target.userID);
-                DrawQuestCompleteUI(target, quest);
-                questCompleteVisible.Add(target.userID);
-            });
+            TryFinishQuest(target, progress, quest);
         }
 
         private void ForceCompleteDukeQuest(BasePlayer target, int questId)
@@ -1980,6 +2014,7 @@ namespace Oxide.Plugins
 
             if (quest.HasInventoryTrackedRequirements)
             {
+                InitializeInventoryBaseline(player, progress, quest);
                 UpdateInventoryTrackedProgress(player, progress, quest);
             }
 
@@ -2036,21 +2071,11 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = $"0 {currentTop - parchmentHeight}", AnchorMax = $"1 {currentTop}" }
             }, UiRoot, Parchment);
 
-            float textHeight = lines.Count * LineHeight;
-            float padding = (parchmentHeight - textHeight) / 2f;
-            float startY = 1f - (padding / parchmentHeight);
-
-            for (int i = 0; i < lines.Count; i++)
+            c.Add(new CuiLabel
             {
-                float yMax = startY - (i * LineHeight / parchmentHeight);
-                float yMin = yMax - (LineHeight / parchmentHeight);
-
-                c.Add(new CuiLabel
-                {
-                    Text = { Text = lines[i], FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
-                    RectTransform = { AnchorMin = $"0 {yMin}", AnchorMax = $"1 {yMax}" }
-                }, Parchment);
-            }
+                Text = { Text = string.Join("\n", lines), FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, Parchment);
 
             currentTop -= parchmentHeight;
 
@@ -2084,8 +2109,7 @@ namespace Oxide.Plugins
             c.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" },
-                CursorEnabled = true
+                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" }
             }, "Hud", QuestCompleteRoot);
 
             float currentTop = 1f;
@@ -2124,12 +2148,11 @@ namespace Oxide.Plugins
                 RectTransform = { AnchorMin = $"0 {currentTop - GoalBarHeight}", AnchorMax = $"1 {currentTop}" }
             }, QuestCompleteRoot, QuestCompleteBottom);
 
-            c.Add(new CuiButton
+            c.Add(new CuiLabel
             {
-                Button = { Color = "0 0 0 0", Command = "quests.complete.next", Close = QuestCompleteRoot },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
-                Text = { Text = "Next Quest", FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" }
-            }, QuestCompleteBottom, "QuestsUI.CompleteBottom.Button");
+                Text = { Text = "Quest Complete", FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
+                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+            }, QuestCompleteBottom, "QuestsUI.CompleteBottom.Label");
 
             CuiHelper.AddUi(player, c);
         }
