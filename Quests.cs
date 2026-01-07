@@ -134,8 +134,8 @@ namespace Oxide.Plugins
         private const float QuestBarHeight = 0.12f;
         private const float GoalBarHeight = 0.10f;
         private const float LineHeight = 0.055f;
-        private const float HotbarOffsetY = -0.085f;
-        private const float UiMinOffsetY = 0.02f;
+        private const float HotbarOffsetY = -0.05f;
+        private const float UiMinOffsetY = -0.05f;
 
         private const int QuestFontSize = 14;
         private const int BodyFontSize = 11;
@@ -854,16 +854,10 @@ namespace Oxide.Plugins
             quests[HuntsmanQuestStartId + 3] = new QuestDefinition
             {
                 Id = HuntsmanQuestStartId + 3,
-                Title = "Huntsman IV — Harvest some fish",
-                Description = "Gut your fish and collect raw fillets.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["fish.raw"] = 20
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "bbq", Amount = 1 }
-                },
+                Title = "Huntsman IV — Press onward",
+                Description = "Sharpen your instincts and prepare for the next hunt.",
+                Requirements = new Dictionary<string, int>(),
+                Rewards = new List<QuestReward>(),
                 ChainKey = HuntsmanChainName
             };
 
@@ -1067,6 +1061,7 @@ namespace Oxide.Plugins
                 progress.Completed = false;
                 progress.RewardPending = false;
                 SavePlayerData();
+                InitializeInventoryBaseline(player, progress, quests[progress.QuestId]);
             }
 
             return progress;
@@ -1173,6 +1168,45 @@ namespace Oxide.Plugins
             }
 
             // Duke crafted-item quests should only advance from crafting completion.
+        }
+
+        private void OnItemStacked(Item item, Item target, int amount)
+        {
+            if (amount <= 0)
+                return;
+
+            var player = target?.parent?.GetOwnerPlayer()
+                         ?? target?.GetOwnerPlayer()
+                         ?? item?.GetOwnerPlayer()
+                         ?? target?.parent?.entityOwner?.ToPlayer();
+            if (player == null)
+                return;
+
+            var info = target?.info ?? item?.info;
+            if (info?.shortname == null)
+                return;
+
+            var normalizedKey = NormalizeRequirementKey(info.shortname);
+
+            if (!TryGetActiveQuest(player, out var progress, out var quest))
+                return;
+
+            if (quest.HasInventoryTrackedRequirements)
+                UpdateInventoryTrackedProgress(player, progress, quest);
+
+            if (ShouldIgnoreContainerGainForGatherQuest(quest, normalizedKey))
+                return;
+
+            if (InventoryTrackedRequirementKeys.Contains(normalizedKey))
+                return;
+
+            var requirementOverride = normalizedKey;
+            if (quest.Requirements.ContainsKey("fish.any") && IsFishRequirement(normalizedKey))
+            {
+                requirementOverride = "fish.any";
+            }
+
+            HandleQuestItemAcquired(player, progress, quest, info.shortname, amount, requirementOverride);
         }
 
         private bool IsDukeQuestId(int questId) =>
@@ -1359,7 +1393,8 @@ namespace Oxide.Plugins
                 var baseline = progress.InventoryBaseline.TryGetValue(req.Key, out var v) ? v : 0;
 
                 var delta = Mathf.Max(0, haveNow - baseline);
-                progress.Progress[req.Key] = Mathf.Min(delta, req.Value);
+                var currentProgress = progress.Progress.TryGetValue(req.Key, out var current) ? current : 0;
+                progress.Progress[req.Key] = Mathf.Min(Mathf.Max(currentProgress, delta), req.Value);
             }
 
             EvaluateQuestProgressFulfillment(player, progress, quest);
@@ -1377,6 +1412,9 @@ namespace Oxide.Plugins
             {
                 var normalizedKey = NormalizeRequirementKey(req.Key);
                 if (!InventoryTrackedRequirementKeys.Contains(normalizedKey)) continue;
+
+                if (progress.InventoryBaseline.ContainsKey(req.Key))
+                    continue;
 
                 var currentAmount = GetItemAmount(player, req.Key);
                 progress.InventoryBaseline[req.Key] = currentAmount;
@@ -1806,6 +1844,10 @@ namespace Oxide.Plugins
             }
 
             EnsureStarterQuestCompletedForUnlockedChains(player, progress);
+            if (quests.ContainsKey(progress.QuestId))
+            {
+                InitializeInventoryBaseline(player, progress, quests[progress.QuestId]);
+            }
 
             if (args != null && args.Length > 0)
             {
@@ -2352,7 +2394,7 @@ namespace Oxide.Plugins
 
             float parchmentHeight = Mathf.Max(LineHeight * 2, lines.Count * LineHeight);
             float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
-            float offsetY = Mathf.Max(UiMinOffsetY, HotbarOffsetY);
+            float offsetY = UiMinOffsetY + HotbarOffsetY;
 
             var c = new CuiElementContainer();
 
@@ -2416,7 +2458,7 @@ namespace Oxide.Plugins
 
             float parchmentHeight = LineHeight * 2;
             float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
-            float offsetY = Mathf.Max(UiMinOffsetY, HotbarOffsetY);
+            float offsetY = UiMinOffsetY + HotbarOffsetY;
 
             var c = new CuiElementContainer();
 
@@ -2477,7 +2519,7 @@ namespace Oxide.Plugins
 
             float parchmentHeight = LineHeight * 2;
             float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
-            float offsetY = Mathf.Max(UiMinOffsetY, HotbarOffsetY);
+            float offsetY = UiMinOffsetY + HotbarOffsetY;
 
             var c = new CuiElementContainer();
 
