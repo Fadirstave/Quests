@@ -35,6 +35,9 @@ namespace Oxide.Plugins
             public string Description;
             public Dictionary<string, int> Requirements;
             public List<QuestReward> Rewards;
+            public string ChainKey;
+            public string CompletionMessage;
+            public Action<BasePlayer> CompletionAction;
             public bool HasInventoryTrackedRequirements;
             public bool Completed;
             public bool RewardPending;
@@ -48,6 +51,7 @@ namespace Oxide.Plugins
             public bool Completed;
             public bool RewardPending;
             public bool Started;
+            public bool StarterCompleted;
         }
 
         private static readonly Dictionary<string, string> RewardShortNameAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -131,6 +135,7 @@ namespace Oxide.Plugins
         private const float GoalBarHeight = 0.10f;
         private const float LineHeight = 0.055f;
         private const float HotbarOffsetY = -0.085f;
+        private const float UiMinOffsetY = 0.02f;
 
         private const int QuestFontSize = 14;
         private const int BodyFontSize = 11;
@@ -150,6 +155,8 @@ namespace Oxide.Plugins
             "These quests are still in early development and will be added soon!";
         private const string MissingDescriptionFallback = "Description coming soon.";
         private const string DukeChainName = "theduke";
+        private const string TidewardenChainName = "tidewarden";
+        private const string HuntsmanChainName = "huntsman";
         private const ulong DukeNpcId = 8944230400;
         private const string DukeNpcName = "Duke of the Commonwealth";
         private const int DukeQuestFirstId = 1;
@@ -159,7 +166,10 @@ namespace Oxide.Plugins
         private const string DukePriceCommand = "swear fealty";
         private const string EsquirePermission = "guishop.use";
         private const string EsquireTitlePermission = "quests.duke.esquire";
-
+        private const int StarterQuestFinalId = 23;
+        private const int TidewardenQuestStartId = 100;
+        private const int HuntsmanQuestStartId = 200;
+        private const string StarterChainKey = "starter";
 
         private static readonly string[] DukeRequiredItems =
         {
@@ -683,8 +693,247 @@ namespace Oxide.Plugins
                 }
             };
 
+            quests[TidewardenQuestStartId] = new QuestDefinition
+            {
+                Id = TidewardenQuestStartId,
+                Title = "Tidewarden I — Gotta have rope",
+                Description = "Collect rope for your fishing kit.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["rope"] = 2
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "wood", Amount = 200 }
+                },
+                ChainKey = TidewardenChainName
+            };
+
+            quests[TidewardenQuestStartId + 1] = new QuestDefinition
+            {
+                Id = TidewardenQuestStartId + 1,
+                Title = "Tidewarden II — Prepare your line",
+                Description = "Craft a handmade fishing rod.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["fishingrod.handmade"] = 1
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "worm", Amount = 10 }
+                },
+                ChainKey = TidewardenChainName
+            };
+
+            quests[TidewardenQuestStartId + 2] = new QuestDefinition
+            {
+                Id = TidewardenQuestStartId + 2,
+                Title = "Tidewarden III — Cast your line",
+                Description = "Catch 5 fish of any kind.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["fish.any"] = 5
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "pie.survivors", Amount = 1 }
+                },
+                ChainKey = TidewardenChainName
+            };
+
+            quests[TidewardenQuestStartId + 3] = new QuestDefinition
+            {
+                Id = TidewardenQuestStartId + 3,
+                Title = "Tidewarden IV — Harvest some fish",
+                Description = "Gut your fish and collect raw fillets.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["fish.raw"] = 20
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "bbq", Amount = 1 }
+                },
+                ChainKey = TidewardenChainName
+            };
+
+            quests[TidewardenQuestStartId + 4] = new QuestDefinition
+            {
+                Id = TidewardenQuestStartId + 4,
+                Title = "Tidewarden V — Cook and eat your catch",
+                Description = "Cook your fish and collect the meal.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["fish.cooked"] = 5
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "pie.fish", Amount = 1 }
+                },
+                ChainKey = TidewardenChainName
+            };
+
+            quests[TidewardenQuestStartId + 5] = new QuestDefinition
+            {
+                Id = TidewardenQuestStartId + 5,
+                Title = "Tidewarden VI — Better bait",
+                Description = "Collect wolf meat for better bait.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["wolfmeat.raw"] = 20
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "wolfmeat.raw", Amount = 20 }
+                },
+                ChainKey = TidewardenChainName
+            };
+
+            quests[TidewardenQuestStartId + 6] = new QuestDefinition
+            {
+                Id = TidewardenQuestStartId + 6,
+                Title = "Tidewarden VII — Fisherman",
+                Description = "Catch 20 trout.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["fish.troutsmall"] = 20
+                },
+                Rewards = new List<QuestReward>(),
+                ChainKey = TidewardenChainName,
+                CompletionMessage = Prefix + "The tides now answer to your hand. You are named Tidewarden.",
+                CompletionAction = GrantTidewardenRewards
+            };
+
+            quests[HuntsmanQuestStartId] = new QuestDefinition
+            {
+                Id = HuntsmanQuestStartId,
+                Title = "Huntsman I — The essentials",
+                Description = "Craft your hunting gear.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["bow.hunting"] = 1,
+                    ["knife.bone"] = 1,
+                    ["arrow.wooden"] = 40
+                },
+                Rewards = new List<QuestReward>(),
+                ChainKey = HuntsmanChainName
+            };
+
+            quests[HuntsmanQuestStartId + 1] = new QuestDefinition
+            {
+                Id = HuntsmanQuestStartId + 1,
+                Title = "Huntsman II — First hunt",
+                Description = "Choke 5 chickens.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["chicken.kill"] = 5
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "easter.goldegg", Amount = 1 }
+                },
+                ChainKey = HuntsmanChainName
+            };
+
+            quests[HuntsmanQuestStartId + 2] = new QuestDefinition
+            {
+                Id = HuntsmanQuestStartId + 2,
+                Title = "Huntsman III — Oh deer!",
+                Description = "Slay 5 stags.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["stag.kill"] = 5
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "pie.bigcat", Amount = 1 }
+                },
+                ChainKey = HuntsmanChainName
+            };
+
+            quests[HuntsmanQuestStartId + 3] = new QuestDefinition
+            {
+                Id = HuntsmanQuestStartId + 3,
+                Title = "Huntsman IV — Harvest some fish",
+                Description = "Gut your fish and collect raw fillets.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["fish.raw"] = 20
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "bbq", Amount = 1 }
+                },
+                ChainKey = HuntsmanChainName
+            };
+
+            quests[HuntsmanQuestStartId + 4] = new QuestDefinition
+            {
+                Id = HuntsmanQuestStartId + 4,
+                Title = "Huntsman V — Apex predator",
+                Description = "Hunt down and slay a pack of wolves.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["wolf.kill"] = 3
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "hat.wolf", Amount = 1 }
+                },
+                ChainKey = HuntsmanChainName
+            };
+
+            quests[HuntsmanQuestStartId + 5] = new QuestDefinition
+            {
+                Id = HuntsmanQuestStartId + 5,
+                Title = "Huntsman VI — Forest predator",
+                Description = "Slay the forest beasts.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["bear.kill"] = 2
+                },
+                Rewards = new List<QuestReward>(),
+                ChainKey = HuntsmanChainName
+            };
+
+            quests[HuntsmanQuestStartId + 6] = new QuestDefinition
+            {
+                Id = HuntsmanQuestStartId + 6,
+                Title = "Huntsman VII — Frozen predator",
+                Description = "Slay the frozen beasts.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["polarbear.kill"] = 2
+                },
+                Rewards = new List<QuestReward>
+                {
+                    new QuestReward { ShortName = "pie.bigcat", Amount = 1 }
+                },
+                ChainKey = HuntsmanChainName
+            };
+
+            quests[HuntsmanQuestStartId + 7] = new QuestDefinition
+            {
+                Id = HuntsmanQuestStartId + 7,
+                Title = "Huntsman VIII — The final hunt!",
+                Description = "Slay the king of the jungle.",
+                Requirements = new Dictionary<string, int>
+                {
+                    ["tiger.kill"] = 1
+                },
+                Rewards = new List<QuestReward>(),
+                ChainKey = HuntsmanChainName,
+                CompletionMessage = Prefix + "By blood and blade, you have earned the title: Huntsman.",
+                CompletionAction = GrantHuntsmanRewards
+            };
+
             foreach (var quest in quests.Values)
             {
+                if (string.IsNullOrEmpty(quest.ChainKey) && quest.Id <= StarterQuestFinalId)
+                {
+                    quest.ChainKey = StarterChainKey;
+                }
+
                 quest.HasInventoryTrackedRequirements = quest.Requirements.Keys
                     .Any(key => InventoryTrackedRequirementKeys.Contains(NormalizeRequirementKey(key)));
             }
@@ -805,6 +1054,11 @@ namespace Oxide.Plugins
                 activeQuests[player.userID] = progress;
             }
 
+            if (!progress.StarterCompleted && progress.Completed && progress.QuestId == StarterQuestFinalId)
+            {
+                progress.StarterCompleted = true;
+            }
+
             if (progress.Completed && quests.ContainsKey(progress.QuestId + 1))
             {
                 progress.QuestId++;
@@ -909,7 +1163,13 @@ namespace Oxide.Plugins
                 if (InventoryTrackedRequirementKeys.Contains(normalizedKey))
                     return;
 
-                HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, normalizedKey);
+                var requirementOverride = normalizedKey;
+                if (quest.Requirements.ContainsKey("fish.any") && IsFishRequirement(normalizedKey))
+                {
+                    requirementOverride = "fish.any";
+                }
+
+                HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, requirementOverride);
             }
 
             // Duke crafted-item quests should only advance from crafting completion.
@@ -977,6 +1237,32 @@ namespace Oxide.Plugins
             {
                 HandleQuestItemAcquired(player, "boar.kill", 1);
             }
+            else if (shortName.IndexOf("chicken", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                HandleQuestItemAcquired(player, "chicken.kill", 1);
+            }
+            else if (shortName.IndexOf("stag", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                HandleQuestItemAcquired(player, "stag.kill", 1);
+            }
+            else if (shortName.IndexOf("wolf", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                HandleQuestItemAcquired(player, "wolf.kill", 1);
+            }
+            else if (shortName.IndexOf("polarbear", StringComparison.OrdinalIgnoreCase) >= 0
+                     || (shortName.IndexOf("polar", StringComparison.OrdinalIgnoreCase) >= 0
+                         && shortName.IndexOf("bear", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                HandleQuestItemAcquired(player, "polarbear.kill", 1);
+            }
+            else if (shortName.IndexOf("bear", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                HandleQuestItemAcquired(player, "bear.kill", 1);
+            }
+            else if (shortName.IndexOf("tiger", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                HandleQuestItemAcquired(player, "tiger.kill", 1);
+            }
             else if (shortName.IndexOf("barrel", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 HandleQuestItemAcquired(player, "road.barrel", 1);
@@ -1038,10 +1324,7 @@ namespace Oxide.Plugins
                 requiredAmount
             );
 
-            if (dukeUiVisible.Contains(player.userID))
-            {
-                DrawDukeUI(player, progress, quest);
-            }
+            DrawDukeUI(player, progress, quest);
 
             if (!HasMetAllRequirements(progress, quest))
                 return;
@@ -1052,9 +1335,7 @@ namespace Oxide.Plugins
         private void EvaluateQuestProgressFulfillment(BasePlayer player, QuestProgress progress, QuestDefinition quest)
         {
             if (questUiVisible.Contains(player.userID))
-            {
                 DrawQuestUi(player, progress, quest);
-            }
 
             if (!HasMetAllRequirements(progress, quest))
                 return;
@@ -1062,12 +1343,26 @@ namespace Oxide.Plugins
             TryFinishQuest(player, progress, quest);
         }
 
-        private void UpdateInventoryTrackedProgress(BasePlayer player)
+        private void UpdateInventoryTrackedProgress(BasePlayer player, QuestProgress progress, QuestDefinition quest)
         {
-            if (!TryGetActiveQuest(player, out var progress, out var quest))
+            if (player == null || quest == null || !quest.HasInventoryTrackedRequirements)
                 return;
 
-            UpdateInventoryTrackedProgress(player, progress, quest);
+            InitializeInventoryBaseline(player, progress, quest);
+
+            foreach (var req in quest.Requirements)
+            {
+                var normalizedKey = NormalizeRequirementKey(req.Key);
+                if (!InventoryTrackedRequirementKeys.Contains(normalizedKey)) continue;
+
+                var haveNow = GetItemAmount(player, req.Key);
+                var baseline = progress.InventoryBaseline.TryGetValue(req.Key, out var v) ? v : 0;
+
+                var delta = Mathf.Max(0, haveNow - baseline);
+                progress.Progress[req.Key] = Mathf.Min(delta, req.Value);
+            }
+
+            EvaluateQuestProgressFulfillment(player, progress, quest);
         }
 
         private void InitializeInventoryBaseline(BasePlayer player, QuestProgress progress, QuestDefinition quest)
@@ -1081,98 +1376,33 @@ namespace Oxide.Plugins
             foreach (var req in quest.Requirements)
             {
                 var normalizedKey = NormalizeRequirementKey(req.Key);
-                if (!InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                    continue;
+                if (!InventoryTrackedRequirementKeys.Contains(normalizedKey)) continue;
 
-                if (progress.InventoryBaseline.ContainsKey(req.Key))
-                    continue;
-
-                var def = FindItemDefinitionWithFallback(req.Key);
-                if (def == null)
-                    continue;
-
-                int existing = progress.Progress.TryGetValue(req.Key, out var current) ? current : 0;
-                int total = CountItemAcrossPlayerInventories(player, def);
-                int baseline = Math.Max(0, total - existing);
-
-                progress.InventoryBaseline[req.Key] = baseline;
+                var currentAmount = GetItemAmount(player, req.Key);
+                progress.InventoryBaseline[req.Key] = currentAmount;
             }
-        }
-
-        private void UpdateInventoryTrackedProgress(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            if (player == null || quest == null || !quest.HasInventoryTrackedRequirements)
-                return;
-
-            bool changed = false;
-
-            InitializeInventoryBaseline(player, progress, quest);
-
-            foreach (var req in quest.Requirements)
-            {
-                var normalizedKey = NormalizeRequirementKey(req.Key);
-                if (!InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                    continue;
-
-                var def = FindItemDefinitionWithFallback(req.Key);
-                if (def == null)
-                    continue;
-
-                int existing = progress.Progress.TryGetValue(req.Key, out var current) ? current : 0;
-                int total = CountItemAcrossPlayerInventories(player, def);
-                int baseline = progress.InventoryBaseline != null && progress.InventoryBaseline.TryGetValue(req.Key, out var storedBaseline)
-                    ? storedBaseline
-                    : 0;
-                int delta = Math.Max(0, total - baseline);
-                int clamped = Mathf.Min(req.Value, Math.Max(existing, delta));
-
-                if (clamped != existing)
-                {
-                    progress.Progress[req.Key] = clamped;
-                    changed = true;
-                }
-            }
-
-            if (changed)
-                EvaluateQuestProgressFulfillment(player, progress, quest);
         }
 
         private bool HasMetAllRequirements(QuestProgress progress, QuestDefinition quest)
         {
             foreach (var req in quest.Requirements)
             {
-                int cur = progress.Progress.TryGetValue(req.Key, out var v) ? v : 0;
-                if (cur < req.Value)
+                if (!progress.Progress.TryGetValue(req.Key, out var current))
+                    return false;
+
+                if (current < req.Value)
                     return false;
             }
 
             return true;
         }
 
-        private int CountItemAcrossPlayerInventories(BasePlayer player, ItemDefinition definition)
+        private int GetItemAmount(BasePlayer player, string shortName)
         {
-            if (player == null || definition == null)
-                return 0;
+            var definition = FindItemDefinitionWithFallback(shortName);
+            if (definition == null) return 0;
 
-            int total = 0;
-
-            void AddFromContainer(ItemContainer container)
-            {
-                if (container == null) return;
-
-                foreach (var item in container.itemList)
-                {
-                    if (item?.info == null) continue;
-                    if (!item.info.shortname.Equals(definition.shortname, StringComparison.OrdinalIgnoreCase)) continue;
-
-                    total += item.amount;
-                }
-            }
-
-            AddFromContainer(player.inventory?.containerMain);
-            AddFromContainer(player.inventory?.containerBelt);
-
-            return total;
+            return player.inventory.GetAmount(definition.itemid);
         }
 
         private Item FindItemInInventories(BasePlayer player, string shortName)
@@ -1267,9 +1497,25 @@ namespace Oxide.Plugins
                 {
                     progress.Completed = true;
                     progress.RewardPending = false;
+                    if (quest.ChainKey == StarterChainKey)
+                    {
+                        progress.StarterCompleted = true;
+                    }
                     SavePlayerData();
 
-                    SendReply(player, BuildStarterCompletionMessage());
+                    if (quest.CompletionAction != null)
+                    {
+                        quest.CompletionAction(player);
+                    }
+
+                    if (!string.IsNullOrEmpty(quest.CompletionMessage))
+                    {
+                        SendReply(player, quest.CompletionMessage);
+                    }
+                    else if (quest.ChainKey == StarterChainKey)
+                    {
+                        SendReply(player, BuildStarterCompletionMessage());
+                    }
                 }
 
                 CuiHelper.DestroyUi(player, UiRoot);
@@ -1399,6 +1645,26 @@ namespace Oxide.Plugins
             permission.AddUserGroup(player.UserIDString, "esquire");
             permission.GrantUserPermission(player.UserIDString, EsquirePermission, this);
             permission.GrantUserPermission(player.UserIDString, EsquireTitlePermission, this);
+        }
+
+        private void GrantTidewardenRewards(BasePlayer player)
+        {
+            if (player == null)
+            {
+                return;
+            }
+
+            permission.AddUserGroup(player.UserIDString, "tidewarden");
+        }
+
+        private void GrantHuntsmanRewards(BasePlayer player)
+        {
+            if (player == null)
+            {
+                return;
+            }
+
+            permission.AddUserGroup(player.UserIDString, "huntsman");
         }
 
         private bool HasSpaceForRewards(BasePlayer player, QuestDefinition quest)
@@ -1543,9 +1809,21 @@ namespace Oxide.Plugins
 
             if (args != null && args.Length > 0)
             {
-                if (!progress.Completed)
+                if (!progress.StarterCompleted)
                 {
                     SendReply(player, Prefix + "Complete the starter quest before starting quest chains.");
+                    return;
+                }
+
+                if (progress.RewardPending)
+                {
+                    SendReply(player, Prefix + "Claim your pending reward before starting a new quest chain.");
+                    return;
+                }
+
+                if (TryGetActiveQuest(player, out _, out _))
+                {
+                    SendReply(player, Prefix + "Finish your current quest before starting a new quest chain.");
                     return;
                 }
 
@@ -1562,7 +1840,26 @@ namespace Oxide.Plugins
                     return;
                 }
 
+                if (TryStartQuestChain(player, progress, input))
+                {
+                    return;
+                }
+
                 SendReply(player, Prefix + DevPlaceholderMsg);
+                return;
+            }
+
+            if (questCompleteVisible.Contains(player.userID))
+            {
+                CuiHelper.DestroyUi(player, QuestCompleteRoot);
+                questCompleteVisible.Remove(player.userID);
+                return;
+            }
+
+            if (dukeCompleteVisible.Contains(player.userID))
+            {
+                CuiHelper.DestroyUi(player, DukeCompleteRoot);
+                dukeCompleteVisible.Remove(player.userID);
                 return;
             }
 
@@ -1609,6 +1906,56 @@ namespace Oxide.Plugins
                 || chainName.Replace(" ", string.Empty).Equals(DukeChainName, StringComparison.OrdinalIgnoreCase);
         }
 
+        private bool TryStartQuestChain(BasePlayer player, QuestProgress progress, string input)
+        {
+            if (player == null || progress == null || string.IsNullOrWhiteSpace(input))
+            {
+                return false;
+            }
+
+            var normalized = input.Trim().Replace(" ", string.Empty);
+
+            if (normalized.Equals(TidewardenChainName, StringComparison.OrdinalIgnoreCase)
+                || normalized.Equals("fisherman", StringComparison.OrdinalIgnoreCase))
+            {
+                StartQuestChain(player, progress, TidewardenQuestStartId);
+                return true;
+            }
+
+            if (normalized.Equals(HuntsmanChainName, StringComparison.OrdinalIgnoreCase)
+                || normalized.Equals("hunter", StringComparison.OrdinalIgnoreCase))
+            {
+                StartQuestChain(player, progress, HuntsmanQuestStartId);
+                return true;
+            }
+
+            return false;
+        }
+
+        private void StartQuestChain(BasePlayer player, QuestProgress progress, int questId)
+        {
+            if (!quests.ContainsKey(questId))
+            {
+                SendReply(player, Prefix + "That quest chain is not available yet.");
+                return;
+            }
+
+            progress.QuestId = questId;
+            progress.Progress = new Dictionary<string, int>();
+            progress.InventoryBaseline = new Dictionary<string, int>();
+            progress.Completed = false;
+            progress.RewardPending = false;
+            progress.Started = true;
+            SavePlayerData();
+
+            CuiHelper.DestroyUi(player, UiRoot);
+            questUiVisible.Remove(player.userID);
+
+            InitializeInventoryBaseline(player, progress, quests[progress.QuestId]);
+            DrawUI(player);
+            questUiVisible.Add(player.userID);
+        }
+
         private void EnsureStarterQuestCompletedForUnlockedChains(BasePlayer player, QuestProgress progress)
         {
             if (player == null || progress == null || progress.Completed)
@@ -1622,6 +1969,7 @@ namespace Oxide.Plugins
 
             progress.Completed = true;
             progress.RewardPending = false;
+            progress.StarterCompleted = true;
             SavePlayerData();
         }
 
@@ -1718,15 +2066,20 @@ namespace Oxide.Plugins
         }
 
         // =========================
-        // RESET COMMAND
+        // ADMIN COMMANDS
         // =========================
         [ChatCommand("questreset")]
         private void CmdQuestReset(BasePlayer player, string cmd, string[] args)
         {
-            if (!IsAdmin(player)) return;
-
-            if (args == null || args.Length == 0)
+            if (!IsAdmin(player))
             {
+                SendReply(player, Prefix + "You are not an admin.");
+                return;
+            }
+
+            if (args.Length == 0)
+            {
+                var progress = GetProgress(player);
                 if (TryGetActiveDukeQuest(player, out var dukeProgress, out _))
                 {
                     ResetDukeQuest(player, dukeProgress.QuestId);
@@ -1734,82 +2087,70 @@ namespace Oxide.Plugins
                     return;
                 }
 
-                if (TryGetActiveQuest(player, out var progress, out _))
-                {
-                    ResetQuest(player, progress.QuestId);
-                    SendReply(player, Prefix + $"Reset quest {progress.QuestId} for {player.displayName}.");
-                    return;
-                }
-
-                SendReply(player, Prefix + "No active quest to reset.");
+                ResetQuest(player, progress.QuestId);
+                SendReply(player, Prefix + $"Reset quest {progress.QuestId} for {player.displayName}.");
                 return;
             }
 
-            BasePlayer target;
-            int targetQuest;
-
-            if (args.Length == 1)
+            var target = ResolvePlayerTarget(player, args.Length > 1 ? args[1] : args[0]);
+            if (target == null)
             {
-                target = player;
+                SendReply(player, Prefix + "Player not found.");
+                return;
+            }
+
+            int targetQuest;
+            if (args.Length > 1 && !IsDukeChain(args[0]))
+            {
                 if (!int.TryParse(args[0], out targetQuest))
                 {
-                    if (IsDukeChain(args[0]))
-                    {
-                        ResetDukeQuest(target);
-                        SendReply(player, Prefix + $"Reset The Duke quest chain for {target.displayName}.");
-                        return;
-                    }
-
                     SendReply(player, Prefix + "Usage: /questreset <questId|The Duke> [player name|steamId|me]");
                     return;
                 }
             }
             else
             {
-                target = ResolvePlayerTarget(player, args[1]);
-                if (target == null)
+                if (!int.TryParse(args.Length > 1 ? args[1] : args[0], out targetQuest))
                 {
-                    SendReply(player, Prefix + $"Player not found: {args[1]}");
-                    return;
-                }
-
-                if (!int.TryParse(args[0], out targetQuest))
-                {
-                    if (IsDukeChain(args[0]))
-                    {
-                        ResetDukeQuest(target);
-                        SendReply(player, Prefix + $"Reset The Duke quest chain for {target.displayName}.");
-                        return;
-                    }
-
-                    SendReply(player, Prefix + "Usage: /questreset <questId|The Duke> [player name|steamId|me]");
-                    return;
+                    targetQuest = 0;
                 }
             }
 
-            if (IsDukeQuestId(targetQuest))
+            if (args.Length > 1)
+            {
+                if (IsDukeChain(args[0]))
+                {
+                    ResetDukeQuest(target, ToDukeQuestInternalId(targetQuest));
+                    SendReply(player, Prefix + $"Reset The Duke quest chain for {target.displayName}.");
+                }
+                else
+                {
+                    ResetQuest(target, targetQuest);
+                    SendReply(player, Prefix + $"Reset quest {targetQuest} for {target.displayName}.");
+                }
+                return;
+            }
+
+            if (IsDukeChain(args[0]))
             {
                 ResetDukeQuest(target, ToDukeQuestInternalId(targetQuest));
-                SendReply(player, Prefix + $"Reset The Duke quest chain to {targetQuest} for {target.displayName}.");
+                SendReply(player, Prefix + $"Reset The Duke quest chain for {target.displayName}.");
+                return;
             }
-            else
-            {
-                ResetQuest(target, targetQuest);
-                SendReply(player, Prefix + $"Reset quest {targetQuest} for {target.displayName}.");
-            }
+
+            ResetQuest(target, targetQuest);
+            SendReply(player, Prefix + $"Reset quest {targetQuest} for {target.displayName}.");
         }
 
         private void ResetQuest(BasePlayer target, int questId)
         {
-            if (target == null) return;
-
-            var progress = GetProgress(target);
             if (!quests.ContainsKey(questId))
             {
                 SendReply(target, Prefix + $"Quest {questId} not found.");
                 return;
             }
 
+            var progress = GetProgress(target);
             progress.QuestId = questId;
             progress.Progress = new Dictionary<string, int>();
             progress.InventoryBaseline = new Dictionary<string, int>();
@@ -1827,26 +2168,10 @@ namespace Oxide.Plugins
             }
         }
 
-        private void ResetDukeQuest(BasePlayer target)
-        {
-            if (target == null) return;
-
-            var quest = BuildDukeQuest(DukeQuestFirstId);
-            dukeQuests[target.userID] = new QuestProgress { QuestId = quest.Id, Started = true };
-            SaveDukeData();
-
-            if (dukeUiVisible.Contains(target.userID))
-            {
-                CuiHelper.DestroyUi(target, UiRoot);
-                dukeUiVisible.Remove(target.userID);
-                DrawDukeUI(target, GetDukeProgress(target), quest);
-                dukeUiVisible.Add(target.userID);
-            }
-        }
-
         private void ResetDukeQuest(BasePlayer target, int questId)
         {
-            if (target == null) return;
+            if (questId < DukeQuestFirstId || questId > DukeQuestFinalId)
+                questId = DukeQuestFirstId;
 
             var quest = BuildDukeQuest(questId);
             dukeQuests[target.userID] = new QuestProgress { QuestId = quest.Id, Started = true };
@@ -1861,114 +2186,102 @@ namespace Oxide.Plugins
             }
         }
 
-        // =========================
-        // FORCE COMPLETE COMMAND
-        // =========================
         [ChatCommand("questcomplete")]
         private void CmdQuestComplete(BasePlayer player, string cmd, string[] args)
         {
-            if (!IsAdmin(player)) return;
-
-            if (args == null || args.Length == 0)
+            if (!IsAdmin(player))
             {
-                if (TryGetActiveDukeQuest(player, out var dukeProgress, out _))
-                {
-                    ForceCompleteDukeQuest(player, dukeProgress.QuestId);
-                    SendReply(player, Prefix + $"Completed The Duke Quest {DukeQuestIdOffset + dukeProgress.QuestId} for {player.displayName}.");
-                    return;
-                }
-
-                if (TryGetActiveQuest(player, out var progress, out _))
-                {
-                    ForceCompleteQuest(player, progress.QuestId);
-                    SendReply(player, Prefix + $"Completed quest {progress.QuestId} for {player.displayName}.");
-                    return;
-                }
-
-                SendReply(player, Prefix + "No active quest to complete.");
+                SendReply(player, Prefix + "You are not an admin.");
                 return;
             }
 
-            BasePlayer target;
-            int targetQuest;
-
-            if (args.Length == 1)
+            if (args.Length == 0)
             {
-                target = player;
+                var progress = GetProgress(player);
+                if (TryGetActiveDukeQuest(player, out var dukeProgress, out _))
+                {
+                    ForceCompleteDukeQuest(player, dukeProgress.QuestId);
+                    SendReply(player, Prefix + $"Completed The Duke quest {DukeQuestIdOffset + dukeProgress.QuestId} for {player.displayName}.");
+                    return;
+                }
+
+                ForceCompleteQuest(player, progress.QuestId);
+                SendReply(player, Prefix + $"Completed quest {progress.QuestId} for {player.displayName}.");
+                return;
+            }
+
+            var target = ResolvePlayerTarget(player, args.Length > 1 ? args[1] : args[0]);
+            if (target == null)
+            {
+                SendReply(player, Prefix + "Player not found.");
+                return;
+            }
+
+            int targetQuest;
+            if (args.Length > 1 && !IsDukeChain(args[0]))
+            {
                 if (!int.TryParse(args[0], out targetQuest))
                 {
-                    if (IsDukeChain(args[0]))
-                    {
-                        ForceCompleteDukeQuest(target, DukeQuestFinalId);
-                        SendReply(player, Prefix + $"Forced completion of The Duke Quest {DukeQuestIdOffset + DukeQuestFinalId} for {target.displayName}.");
-                        return;
-                    }
-
                     SendReply(player, Prefix + "Usage: /questcomplete <questId|The Duke> [player name|steamId|me]");
                     return;
                 }
             }
             else
             {
-                target = ResolvePlayerTarget(player, args[1]);
-                if (target == null)
+                if (!int.TryParse(args.Length > 1 ? args[1] : args[0], out targetQuest))
                 {
-                    SendReply(player, Prefix + $"Player not found: {args[1]}");
-                    return;
-                }
-
-                if (!int.TryParse(args[0], out targetQuest))
-                {
-                    if (IsDukeChain(args[0]))
-                    {
-                        ForceCompleteDukeQuest(target, DukeQuestFinalId);
-                        SendReply(player, Prefix + $"Forced completion of The Duke Quest {DukeQuestIdOffset + DukeQuestFinalId} for {target.displayName}.");
-                        return;
-                    }
-
-                    SendReply(player, Prefix + "Usage: /questcomplete <questId|The Duke> [player name|steamId|me]");
-                    return;
+                    targetQuest = 0;
                 }
             }
 
-            if (IsDukeQuestId(targetQuest))
+            if (args.Length > 1)
+            {
+                if (IsDukeChain(args[0]))
+                {
+                    ForceCompleteDukeQuest(target, ToDukeQuestInternalId(targetQuest));
+                    SendReply(player, Prefix + $"Completed The Duke quest {DukeQuestIdOffset + targetQuest} for {target.displayName}.");
+                }
+                else
+                {
+                    ForceCompleteQuest(target, targetQuest);
+                    SendReply(player, Prefix + $"Completed quest {targetQuest} for {target.displayName}.");
+                }
+                return;
+            }
+
+            if (IsDukeChain(args[0]))
             {
                 ForceCompleteDukeQuest(target, ToDukeQuestInternalId(targetQuest));
-                SendReply(player, Prefix + $"Forced completion of The Duke Quest {targetQuest} for {target.displayName}.");
+                SendReply(player, Prefix + $"Completed The Duke quest {DukeQuestIdOffset + targetQuest} for {target.displayName}.");
+                return;
             }
-            else
-            {
-                ForceCompleteQuest(target, targetQuest);
-                SendReply(player, Prefix + $"Forced completion of Quest {targetQuest} for {target.displayName}.");
-            }
+
+            ForceCompleteQuest(target, targetQuest);
+            SendReply(player, Prefix + $"Completed quest {targetQuest} for {target.displayName}.");
         }
 
         private void ForceCompleteQuest(BasePlayer target, int questId)
         {
-            if (target == null) return;
-
             if (!quests.TryGetValue(questId, out var quest))
             {
                 SendReply(target, Prefix + $"Quest {questId} not found.");
                 return;
             }
 
-            CuiHelper.DestroyUi(target, QuestCompleteRoot);
             questCompleteVisible.Remove(target.userID);
 
             var progress = GetProgress(target);
             progress.QuestId = quest.Id;
             progress.Progress = new Dictionary<string, int>();
-            progress.Started = true;
+            progress.InventoryBaseline = new Dictionary<string, int>();
             progress.Completed = false;
             progress.RewardPending = false;
+            progress.Started = true;
 
             foreach (var req in quest.Requirements)
             {
                 progress.Progress[req.Key] = req.Value;
             }
-
-            SavePlayerData();
 
             TryFinishQuest(target, progress, quest);
         }
@@ -2039,13 +2352,14 @@ namespace Oxide.Plugins
 
             float parchmentHeight = Mathf.Max(LineHeight * 2, lines.Count * LineHeight);
             float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
+            float offsetY = Mathf.Max(UiMinOffsetY, HotbarOffsetY);
 
             var c = new CuiElementContainer();
 
             c.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" }
+                RectTransform = { AnchorMin = $"0.38 {offsetY}", AnchorMax = $"0.61 {offsetY + totalHeight}" }
             }, "Hud", UiRoot);
 
             float currentTop = 1f;
@@ -2102,13 +2416,14 @@ namespace Oxide.Plugins
 
             float parchmentHeight = LineHeight * 2;
             float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
+            float offsetY = Mathf.Max(UiMinOffsetY, HotbarOffsetY);
 
             var c = new CuiElementContainer();
 
             c.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" }
+                RectTransform = { AnchorMin = $"0.38 {offsetY}", AnchorMax = $"0.61 {offsetY + totalHeight}" }
             }, "Hud", QuestCompleteRoot);
 
             float currentTop = 1f;
@@ -2162,13 +2477,14 @@ namespace Oxide.Plugins
 
             float parchmentHeight = LineHeight * 2;
             float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
+            float offsetY = Mathf.Max(UiMinOffsetY, HotbarOffsetY);
 
             var c = new CuiElementContainer();
 
             c.Add(new CuiPanel
             {
                 Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {HotbarOffsetY}", AnchorMax = $"0.61 {HotbarOffsetY + totalHeight}" },
+                RectTransform = { AnchorMin = $"0.38 {offsetY}", AnchorMax = $"0.61 {offsetY + totalHeight}" },
                 CursorEnabled = true
             }, "Hud", DukeCompleteRoot);
 
@@ -2239,7 +2555,7 @@ namespace Oxide.Plugins
         private string BuildStarterCompletionMessage()
         {
             return "<size=18><color=#D87C2A><b>Starter quest complete!</b></color></size>\n" +
-                   "<color=#FFFFFF>The following quest chains have been unlocked: The Duke, Fisherman, Hunter, Diver, Lumberjack, Treasure Hunter, Bounty Hunter, Explorer, Barrel Smasher. Start one with /quest <b>NAME</b>.</color>\n" +
+                   "<color=#FFFFFF>The following quest chains have been unlocked: The Duke, Tidewarden, Huntsman, Diver, Lumberjack, Treasure Hunter, Bounty Hunter, Explorer, Barrel Smasher. Start one with /quest <b>NAME</b>.</color>\n" +
                    "<color=#AAAAAA>The questing system is still in a very early stage and many quest chains may not be available yet! Leave me feedback in Discord #bug-reports.</color>";
         }
 
@@ -2324,6 +2640,29 @@ namespace Oxide.Plugins
                     return "iotable";
                 default:
                     return shortName;
+            }
+        }
+
+        private bool IsFishRequirement(string shortName)
+        {
+            if (string.IsNullOrWhiteSpace(shortName))
+                return false;
+
+            switch (shortName)
+            {
+                case "fish.anchovy":
+                case "fish.catfish":
+                case "fish.herring":
+                case "fish.minnows":
+                case "fish.orangeroughy":
+                case "fish.salmon":
+                case "fish.sardine":
+                case "fish.smallshark":
+                case "fish.troutsmall":
+                case "fish.yellowperch":
+                    return true;
+                default:
+                    return false;
             }
         }
 
@@ -2614,6 +2953,18 @@ namespace Oxide.Plugins
             {
                 case "boar.kill":
                     return "Slay Boars";
+                case "chicken.kill":
+                    return "Slay Chickens";
+                case "stag.kill":
+                    return "Slay Stags";
+                case "wolf.kill":
+                    return "Slay Wolves";
+                case "bear.kill":
+                    return "Slay Bears";
+                case "polarbear.kill":
+                    return "Slay Polar Bears";
+                case "tiger.kill":
+                    return "Slay Tigers";
                 case "tc_auth":
                     return "Authorization";
                 case "building_block":
@@ -2638,6 +2989,8 @@ namespace Oxide.Plugins
                     return "Repair Bench";
                 case "duke_meet":
                     return "Swear Fealty to The Duke!";
+                case "fish.any":
+                    return "Catch any fish";
                 default:
                     return GetItemDisplayName(key);
             }
