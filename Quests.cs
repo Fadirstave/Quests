@@ -72,9 +72,9 @@ namespace Oxide.Plugins
             ["advanced ore tea"] = "oretea.advanced",
             ["oretea.adv"] = "oretea.advanced",
             ["advancedoretea"] = "oretea.advanced",
-            ["basicblueprintfragment"] = "blueprint.fragment.basic",
-            ["basic blueprint fragment"] = "blueprint.fragment.basic",
-            ["basic blueprint"] = "blueprint.fragment.basic",
+            ["basicblueprintfragment"] = "basicblueprintfragment",
+            ["basic blueprint fragment"] = "basicblueprintfragment",
+            ["basic blueprint"] = "basicblueprintfragment",
         };
 
         private static readonly HashSet<string> InventoryTrackedRequirementKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -157,7 +157,7 @@ namespace Oxide.Plugins
         private const int DukeQuestFinalId = DukeQuestItemCount + 1;
         private const int DukeQuestIdOffset = 9000;
         private const string DukePriceCommand = "swear fealty";
-        private const string EsquirePermission = "quests.guishop.use";
+        private const string EsquirePermission = "guishop.use";
         private const string EsquireTitlePermission = "quests.duke.esquire";
 
 
@@ -588,7 +588,7 @@ namespace Oxide.Plugins
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "blueprint.fragment.basic", Amount = 1 }
+                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 1 }
                 }
             };
 
@@ -633,7 +633,7 @@ namespace Oxide.Plugins
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "blueprint.fragment.basic", Amount = 1 }
+                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 2 }
                 }
             };
 
@@ -641,14 +641,14 @@ namespace Oxide.Plugins
             {
                 Id = 21,
                 Title = "Quest 21 — Workbench",
-                Description = "Craft a workbench and unlock advanced recipes.",
+                Description = "Craft a workbench level 1.",
                 Requirements = new Dictionary<string, int>
                 {
-                    ["workbench2"] = 1
+                    ["workbench1"] = 1
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "blueprint.fragment.basic", Amount = 2 }
+                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 2 }
                 }
             };
 
@@ -663,7 +663,7 @@ namespace Oxide.Plugins
                 },
                 Rewards = new List<QuestReward>
                 {
-                    new QuestReward { ShortName = "blueprint.fragment.basic", Amount = 1 }
+                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 1 }
                 }
             };
 
@@ -1399,7 +1399,6 @@ namespace Oxide.Plugins
             permission.AddUserGroup(player.UserIDString, "esquire");
             permission.GrantUserPermission(player.UserIDString, EsquirePermission, this);
             permission.GrantUserPermission(player.UserIDString, EsquireTitlePermission, this);
-            permission.GrantUserPermission(player.UserIDString, "guishop.use", null);
         }
 
         private bool HasSpaceForRewards(BasePlayer player, QuestDefinition quest)
@@ -2321,7 +2320,7 @@ namespace Oxide.Plugins
 
             switch (shortName)
             {
-                case "workbench3":
+                case "iotable":
                     return "iotable";
                 default:
                     return shortName;
