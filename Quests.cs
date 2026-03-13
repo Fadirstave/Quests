@@ -1,3079 +1,3318 @@
-using System;
+﻿﻿using Newtonsoft.Json;
 using Oxide.Core;
-using Oxide.Core.Libraries.Covalence;
+using Oxide.Core.Plugins;
 using Oxide.Game.Rust.Cui;
-using UnityEngine;
+using Rust;
+using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
+using Facepunch;
+using Oxide.Core.Libraries;
+using UnityEngine;
+using UnityEngine.Networking;
+using Oxide.Plugins.QuestsExtensionMethods;
 
 namespace Oxide.Plugins
 {
-    [Info("Quests", "FadirStave", "2.0.0")]
-    public class Quests : RustPlugin
-    {
-        // =========================
-        // LOGIN / IGNORE (INFOPANEL-STYLE)
-        // =========================
-        private const string IgnoreDataFile = "Quests_Ignore";
-        private Dictionary<ulong, bool> ignoredPlayers = new Dictionary<ulong, bool>();
-        private readonly HashSet<ulong> loginShownThisSession = new HashSet<ulong>();
-
-        // =========================
-        // MODELS
-        // =========================
-        class QuestReward
-        {
-            public string ShortName;
-            public int Amount;
-        }
-
-        class QuestDefinition
-        {
-            public int Id;
-            public string Title;
-            public string Description;
-            public Dictionary<string, int> Requirements;
-            public List<QuestReward> Rewards;
-            public string ChainKey;
-            public string CompletionMessage;
-            public Action<BasePlayer> CompletionAction;
-            public bool HasInventoryTrackedRequirements;
-            public bool Completed;
-            public bool RewardPending;
-        }
-
-        class QuestProgress
-        {
-            public int QuestId;
-            public Dictionary<string, int> Progress = new Dictionary<string, int>();
-            public Dictionary<string, int> InventoryBaseline = new Dictionary<string, int>();
-            public bool Completed;
-            public bool RewardPending;
-            public bool Started;
-            public bool StarterCompleted;
-        }
-
-        private static readonly Dictionary<string, string> RewardShortNameAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["teas.wood"] = "woodtea",
-            ["teas.ore"] = "oretea",
-            ["tea.wood"] = "woodtea",
-            ["tea.ore"] = "oretea",
-            ["teawood"] = "woodtea",
-            ["teaore"] = "oretea",
-            ["basic wood tea"] = "woodtea",
-            ["basic ore tea"] = "oretea",
-            ["basic.wood.tea"] = "woodtea",
-            ["basic.ore.tea"] = "oretea",
-            ["wood tea"] = "woodtea",
-            ["ore tea"] = "oretea",
-            ["harvesting tea"] = "teabasic.pick",
-            ["fish pie"] = "pie.fish",
-            ["fishpie"] = "pie.fish",
-            ["pie.fish"] = "pie.fish",
-            ["boneknife"] = "knife.bone",
-            ["advanced ore tea"] = "oretea.advanced",
-            ["oretea.adv"] = "oretea.advanced",
-            ["advancedoretea"] = "oretea.advanced",
-            ["basicblueprintfragment"] = "basicblueprintfragment",
-            ["basic blueprint fragment"] = "basicblueprintfragment",
-            ["basic blueprint"] = "basicblueprintfragment",
-        };
-
-        private static readonly HashSet<string> InventoryTrackedRequirementKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "wood",
-            "stones",
-            "metal.ore",
-            "sulfur.ore",
-            "metal.fragments",
-            "scrap",
-            "lowgradefuel",
-            "cloth",
-        };
-
-        // =========================
-        // DATA
-        // =========================
-        private Dictionary<int, QuestDefinition> quests;
-        private Dictionary<ulong, QuestProgress> activeQuests;
-        private Dictionary<ulong, QuestProgress> dukeQuests;
-        private readonly Dictionary<ItemCraftTask, ulong> craftTaskOwners = new Dictionary<ItemCraftTask, ulong>();
-        private readonly HashSet<ulong> rewardDelayPending = new HashSet<ulong>();
-
-        private const string PlayerDataFile = "Quests_PlayerData";
-        private const string DukeDataFile = "Quests_DukeData";
-
-        // =========================
-        // UI IDS
-        // =========================
-        private const string UiRoot = "QuestsUI.Root";
-        private const string QuestBar = "QuestsUI.QuestBar";
-        private const string Parchment = "QuestsUI.Parchment";
-        private const string GoalBar = "QuestsUI.GoalBar";
-
-        private const string QuestCompleteRoot = "QuestsUI.CompleteOverlay";
-        private const string DukeCompleteRoot = "QuestsUI.DukeCompleteOverlay";
-        private const string QuestCompleteTop = "QuestsUI.CompleteTop";
-        private const string QuestCompleteParchment = "QuestsUI.CompleteParchment";
-        private const string QuestCompleteBottom = "QuestsUI.CompleteBottom";
-
-        private readonly HashSet<ulong> questUiVisible = new HashSet<ulong>();
-        private readonly HashSet<ulong> questCompleteVisible = new HashSet<ulong>();
-        private readonly HashSet<ulong> dukeCompleteVisible = new HashSet<ulong>();
-        private readonly HashSet<ulong> dukeUiVisible = new HashSet<ulong>();
-        private readonly HashSet<ulong> pendingUiRestore = new HashSet<ulong>();
-
-        // =========================
-        // UI CONSTANTS
-        // =========================
-        private const int MaxCharsPerLine = 85;
-        private const int MaxLines = 2;
-
-        private const float QuestBarHeight = 0.12f;
-        private const float GoalBarHeight = 0.10f;
-        private const float LineHeight = 0.055f;
-        private const float HotbarOffsetY = -0.05f;
-        private const float UiMinOffsetY = -0.05f;
-
-        private const int QuestFontSize = 14;
-        private const int BodyFontSize = 11;
-        private const int GoalFontSize = 12;
-
-        private const float UiAlpha = 0.65f;
-        private const float UiSwapDelay = 0.6f;
-        private const float RewardDelaySeconds = 1f;
-
-        // =========================
-        // CHAT
-        // =========================
-        private const string Prefix = "<color=#D87C2A>Quest:</color> ";
-        private const string InvFullMsg =
-            "Thy pack is full. Make room, then use /reward to claim thy due.";
-        private const string DevPlaceholderMsg =
-            "These quests are still in early development and will be added soon!";
-        private const string MissingDescriptionFallback = "Description coming soon.";
-        private const string DukeChainName = "theduke";
-        private const string TidewardenChainName = "tidewarden";
-        private const string HuntsmanChainName = "huntsman";
-        private const ulong DukeNpcId = 8944230400;
-        private const string DukeNpcName = "Duke of the Commonwealth";
-        private const int DukeQuestFirstId = 1;
-        private const int DukeQuestItemCount = 10;
-        private const int DukeQuestFinalId = DukeQuestItemCount + 1;
-        private const int DukeQuestIdOffset = 9000;
-        private const string DukePriceCommand = "swear fealty";
-        private const string EsquirePermission = "guishop.use";
-        private const string EsquireTitlePermission = "quests.duke.esquire";
-        private const int StarterQuestFinalId = 23;
-        private const int TidewardenQuestStartId = 100;
-        private const int HuntsmanQuestStartId = 200;
-        private const string StarterChainKey = "starter";
-
-        private static readonly string[] DukeRequiredItems =
-        {
-            "roadsign.jacket",
-            "roadsign.kilt",
-            "roadsign.gloves",
-            "coffeecan.helmet",
-            "hoodie",
-            "pants",
-            "shoes.boots",
-            "salvaged.sword",
-            "crossbow",
-            "wooden.shield"
-        };
-
-        // =========================
-        // LIFECYCLE
-        // =========================
-        private void OnServerInitialized()
-        {
-            LoadQuests();
-            LoadPlayerData();
-            LoadDukeData();
-            LoadIgnoreData();
-        }
-
-        private void Init()
-        {
-            if (!permission.PermissionExists(EsquirePermission))
-            {
-                permission.RegisterPermission(EsquirePermission, this);
-            }
-        }
-
-        private void Unload()
-        {
-            SavePlayerData();
-            SaveDukeData();
-            SaveIgnoreData();
-
-            foreach (var player in BasePlayer.activePlayerList)
-            {
-                CuiHelper.DestroyUi(player, UiRoot);
-                CuiHelper.DestroyUi(player, QuestCompleteRoot);
-                CuiHelper.DestroyUi(player, DukeCompleteRoot);
-            }
-        }
-
-        private void OnServerSave()
-        {
-            SaveIgnoreData();
-            SaveDukeData();
-        }
-
-        // =========================
-        // ADMIN CHECK
-        // =========================
-        private bool IsAdmin(BasePlayer player) => player != null && player.IsAdmin;
-
-        // =========================
-        // LOGIN MESSAGE (ONCE PER CONNECTION)
-        // =========================
-        private void OnPlayerConnected(BasePlayer player)
-        {
-            if (player == null) return;
-
-            if (!ignoredPlayers.ContainsKey(player.userID))
-            {
-                // Once per connection
-                if (!loginShownThisSession.Contains(player.userID))
-                {
-                    loginShownThisSession.Add(player.userID);
-
-                    // InfoPanel-style delay so chat is ready
-                    timer.Once(3f, () =>
-                    {
-                        if (player == null || !player.IsConnected) return;
-
-                        SendReply(player,
-                            "<size=18><color=#D87C2A><b>MMO QUESTING</b></color></size>\n" +
-                            "<color=#FFFFFF>This server features a unique MMO-style questing system.\n" +
-                            "Use <b>/quest</b> to begin. Questing is optional and not required to play.</color>\n" +
-                            "<color=#AAAAAA>Use <b>/questignore</b> to never see this message again. Report any issues on discord #bugreport.</color>"
-                        );
-                    });
-                }
-            }
-
-            timer.Once(1f, () => RestoreQuestUi(player));
-        }
-
-        private void OnPlayerDisconnected(BasePlayer player, string reason)
-        {
-            if (player == null) return;
-            // Allow showing again next time they connect (unless ignored)
-            loginShownThisSession.Remove(player.userID);
-
-            if (questUiVisible.Contains(player.userID) || dukeUiVisible.Contains(player.userID))
-            {
-                pendingUiRestore.Add(player.userID);
-            }
-
-            questUiVisible.Remove(player.userID);
-            questCompleteVisible.Remove(player.userID);
-            dukeUiVisible.Remove(player.userID);
-            dukeCompleteVisible.Remove(player.userID);
-            rewardDelayPending.Remove(player.userID);
-        }
-
-        [ChatCommand("questignore")]
-        private void CmdQuestIgnore(BasePlayer player, string cmd, string[] args)
-        {
-            if (player == null) return;
-            ignoredPlayers[player.userID] = true;
-            SaveIgnoreData();
-
-            SendReply(player, Prefix + "Quest intro hidden. (You can still use /quest anytime.)");
-        }
-
-        private void LoadIgnoreData()
-        {
-            ignoredPlayers =
-                Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, bool>>(IgnoreDataFile)
-                ?? new Dictionary<ulong, bool>();
-        }
-
-        private void SaveIgnoreData()
-        {
-            Interface.Oxide.DataFileSystem.WriteObject(IgnoreDataFile, ignoredPlayers);
-        }
-
-        private void RestoreQuestUi(BasePlayer player)
-        {
-            if (player == null || !player.IsConnected)
-            {
-                return;
-            }
-
-            if (!pendingUiRestore.Remove(player.userID))
-            {
-                return;
-            }
-
-            if (TryGetActiveDukeQuest(player, out var dukeProgress, out var dukeQuest))
-            {
-                DrawDukeUI(player, dukeProgress, dukeQuest);
-                dukeUiVisible.Add(player.userID);
-                return;
-            }
-
-            var progress = GetProgress(player);
-            if (progress.Started && !progress.Completed && !progress.RewardPending && quests.ContainsKey(progress.QuestId))
-            {
-                DrawUI(player);
-                questUiVisible.Add(player.userID);
-            }
-        }
-
-        // =========================
-        // QUEST DEFINITIONS
-        // =========================
-        private void LoadQuests()
-        {
-            quests = new Dictionary<int, QuestDefinition>();
-
-            quests[1] = new QuestDefinition
-            {
-                Id = 1,
-                Title = "Quest I – Getting Started",
-                Description = "Take up thy rock and gather wood and stone, the first toil of any survivor.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["wood"] = 400,
-                    ["stones"] = 200
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "woodtea", Amount = 1 },
-                    new QuestReward { ShortName = "oretea", Amount = 1 }
-                }
-            };
-
-            quests[2] = new QuestDefinition
-            {
-                Id = 2,
-                Title = "Quest II — Stone Tools",
-                Description = "Shape stone into tools, that thy labor be swifter and surer.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["stonehatchet"] = 1,
-                    ["stone.pickaxe"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "woodtea", Amount = 1 },
-                    new QuestReward { ShortName = "oretea", Amount = 1 }
-                }
-            };
-
-            quests[3] = new QuestDefinition
-            {
-                Id = 3,
-                Title = "Quest III — Gather Supplies",
-                Description = "Fill thy stores with wood and stone, for greater works soon follow.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["wood"] = 2000,
-                    ["stones"] = 2000
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "wood", Amount = 2000 },
-                    new QuestReward { ShortName = "stones", Amount = 2000 }
-                }
-            };
-
-            quests[4] = new QuestDefinition
-            {
-                Id = 4,
-                Title = "Quest IV — Builder’s Tools",
-                Description = "Craft the tools of builders, and prepare to raise shelter.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["building.planner"] = 1,
-                    ["hammer"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "pie.fish", Amount = 1 }
-                }
-            };
-
-            quests[5] = new QuestDefinition
-            {
-                Id = 5,
-                Title = "Quest V — Claim and Build",
-                Description = "Claim thy land and raise a humble shelter to rest within.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["tc_auth"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "sleepingbag", Amount = 1 }
-                }
-            };
-
-            quests[6] = new QuestDefinition
-            {
-                Id = 6,
-                Title = "Quest VI — Storage",
-                Description = "Build small boxes to guard thy goods from loss and decay.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["box.wooden.crafted"] = 2
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "box.wooden.large", Amount = 1 }
-                }
-            };
-
-            quests[7] = new QuestDefinition
-            {
-                Id = 7,
-                Title = "Quest VII — Secure the Door",
-                Description = "Bar thy home with lock and door, and keep danger without.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["door.hinged.wood"] = 1,
-                    ["lock.key"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "lantern", Amount = 1 },
-                    new QuestReward { ShortName = "rug", Amount = 1 }
-                }
-            };
-
-            quests[8] = new QuestDefinition
-            {
-                Id = 8,
-                Title = "Quest VIII — Cloth Gathering",
-                Description = "Gather cloth from field and foe, for craft and comfort.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["cloth"] = 50
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "cloth", Amount = 50 }
-                }
-            };
-
-            quests[9] = new QuestDefinition
-            {
-                Id = 9,
-                Title = "Quest IX — Simple Clothing",
-                Description = "Stitch simple garb to shield thy flesh from harm.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["burlap.shirt"] = 1,
-                    ["burlap.trousers"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "wood.armor.jacket", Amount = 1 },
-                    new QuestReward { ShortName = "wood.armor.pants", Amount = 1 }
-                }
-            };
-
-            quests[10] = new QuestDefinition
-            {
-                Id = 10,
-                Title = "Quest X — First Weapon",
-                Description = "Craft bow and arrow, and learn to strike from afar.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["bow.hunting"] = 1,
-                    ["arrow.wooden"] = 20
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "knife.bone", Amount = 1 }
-                }
-            };
-
-            quests[11] = new QuestDefinition
-            {
-                Id = 11,
-                Title = "Quest XI — Hunting",
-                Description = "Hunt the wild boar and prove thy strength.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["boar.kill"] = 3
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "harvesting tea", Amount = 1 }
-                }
-            };
-
-            quests[12] = new QuestDefinition
-            {
-                Id = 12,
-                Title = "Quest XII — Low Grade Fuel",
-                Description = "Render fuel from beast and cloth to feed the flame.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["lowgradefuel"] = 100
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "lowgradefuel", Amount = 100 }
-                }
-            };
-
-            quests[13] = new QuestDefinition
-            {
-                Id = 13,
-                Title = "Quest XIII — Furnace",
-                Description = "Shape stone into a furnace for smelting ore.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["furnace.placed"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "furnace", Amount = 1 }
-                }
-            };
-
-            quests[14] = new QuestDefinition
-            {
-                Id = 14,
-                Title = "Quest XIV — Metal Ore",
-                Description = "Mine metal ore from the earth and prepare to refine it.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["metal.ore"] = 500
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "oretea", Amount = 1 }
-                }
-            };
-
-            quests[15] = new QuestDefinition
-            {
-                Id = 15,
-                Title = "Quest XV — Smelting",
-                Description = "Smelt ore into metal fragments.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["metal.fragments"] = 500
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "metal.fragments", Amount = 500 }
-                }
-            };
-
-            quests[16] = new QuestDefinition
-            {
-                Id = 16,
-                Title = "Quest XVI — Better Door",
-                Description = "Forge a metal door and secure thy home.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["door.hinged.metal"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "pie.fish", Amount = 1 }
-                }
-            };
-
-            quests[17] = new QuestDefinition
-            {
-                Id = 17,
-                Title = "Quest XVII — Repairs",
-                Description = "Craft a repair bench and keep thy gear in shape.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["repair.bench"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 1 }
-                }
-            };
-
-            quests[18] = new QuestDefinition
-            {
-                Id = 18,
-                Title = "Quest XVIII — Road Looting",
-                Description = "Break barrels on the road and claim their spoils.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["road.barrel"] = 6
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "scrap", Amount = 25 }
-                }
-            };
-
-            quests[19] = new QuestDefinition
-            {
-                Id = 19,
-                Title = "Quest XIX — Scrap Run",
-                Description = "Gather scrap from the road and prepare for research.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["scrap"] = 50
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "scrap", Amount = 25 }
-                }
-            };
-
-            quests[20] = new QuestDefinition
-            {
-                Id = 20,
-                Title = "Quest XX — Recycling",
-                Description = "Use the recycler to break down unwanted items.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["recycler_use"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 2 }
-                }
-            };
-
-            quests[21] = new QuestDefinition
-            {
-                Id = 21,
-                Title = "Quest XXI — Workbench",
-                Description = "Craft a workbench level 1.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["workbench1"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 2 }
-                }
-            };
-
-            quests[22] = new QuestDefinition
-            {
-                Id = 22,
-                Title = "Quest XXII — Research",
-                Description = "Craft a research table to unlock blueprints.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["research.table"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "basicblueprintfragment", Amount = 1 }
-                }
-            };
-
-            quests[23] = new QuestDefinition
-            {
-                Id = 23,
-                Title = "Quest XXIII — Engineering",
-                Description = "Craft an engineering workbench for advanced craft.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["iotable"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "metal.fragments", Amount = 500 },
-                    new QuestReward { ShortName = "metal.refined", Amount = 50 }
-                }
-            };
-
-            quests[TidewardenQuestStartId] = new QuestDefinition
-            {
-                Id = TidewardenQuestStartId,
-                Title = "Tidewarden I — Gotta have rope",
-                Description = "Collect rope for your fishing kit.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["rope"] = 2
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "wood", Amount = 200 }
-                },
-                ChainKey = TidewardenChainName
-            };
-
-            quests[TidewardenQuestStartId + 1] = new QuestDefinition
-            {
-                Id = TidewardenQuestStartId + 1,
-                Title = "Tidewarden II — Prepare your line",
-                Description = "Craft a handmade fishing rod.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["fishingrod.handmade"] = 1
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "worm", Amount = 10 }
-                },
-                ChainKey = TidewardenChainName
-            };
-
-            quests[TidewardenQuestStartId + 2] = new QuestDefinition
-            {
-                Id = TidewardenQuestStartId + 2,
-                Title = "Tidewarden III — Cast your line",
-                Description = "Catch 5 fish of any kind.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["fish.any"] = 5
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "pie.survivors", Amount = 1 }
-                },
-                ChainKey = TidewardenChainName
-            };
-
-            quests[TidewardenQuestStartId + 3] = new QuestDefinition
-            {
-                Id = TidewardenQuestStartId + 3,
-                Title = "Tidewarden IV — Harvest some fish",
-                Description = "Gut your fish and collect raw fillets.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["fish.raw"] = 20
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "bbq", Amount = 1 }
-                },
-                ChainKey = TidewardenChainName
-            };
-
-            quests[TidewardenQuestStartId + 4] = new QuestDefinition
-            {
-                Id = TidewardenQuestStartId + 4,
-                Title = "Tidewarden V — Cook and eat your catch",
-                Description = "Cook your fish and collect the meal.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["fish.cooked"] = 5
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "pie.fish", Amount = 1 }
-                },
-                ChainKey = TidewardenChainName
-            };
-
-            quests[TidewardenQuestStartId + 5] = new QuestDefinition
-            {
-                Id = TidewardenQuestStartId + 5,
-                Title = "Tidewarden VI — Better bait",
-                Description = "Collect wolf meat for better bait.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["wolfmeat.raw"] = 20
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "wolfmeat.raw", Amount = 20 }
-                },
-                ChainKey = TidewardenChainName
-            };
-
-            quests[TidewardenQuestStartId + 6] = new QuestDefinition
-            {
-                Id = TidewardenQuestStartId + 6,
-                Title = "Tidewarden VII — Fisherman",
-                Description = "Catch 20 trout.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["fish.troutsmall"] = 20
-                },
-                Rewards = new List<QuestReward>(),
-                ChainKey = TidewardenChainName,
-                CompletionMessage = Prefix + "The tides now answer to your hand. You are named Tidewarden.",
-                CompletionAction = GrantTidewardenRewards
-            };
-
-            quests[HuntsmanQuestStartId] = new QuestDefinition
-            {
-                Id = HuntsmanQuestStartId,
-                Title = "Huntsman I — The essentials",
-                Description = "Craft your hunting gear.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["bow.hunting"] = 1,
-                    ["knife.bone"] = 1,
-                    ["arrow.wooden"] = 40
-                },
-                Rewards = new List<QuestReward>(),
-                ChainKey = HuntsmanChainName
-            };
-
-            quests[HuntsmanQuestStartId + 1] = new QuestDefinition
-            {
-                Id = HuntsmanQuestStartId + 1,
-                Title = "Huntsman II — First hunt",
-                Description = "Choke 5 chickens.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["chicken.kill"] = 5
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "easter.goldegg", Amount = 1 }
-                },
-                ChainKey = HuntsmanChainName
-            };
-
-            quests[HuntsmanQuestStartId + 2] = new QuestDefinition
-            {
-                Id = HuntsmanQuestStartId + 2,
-                Title = "Huntsman III — Oh deer!",
-                Description = "Slay 5 stags.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["stag.kill"] = 5
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "pie.bigcat", Amount = 1 }
-                },
-                ChainKey = HuntsmanChainName
-            };
-
-            quests[HuntsmanQuestStartId + 3] = new QuestDefinition
-            {
-                Id = HuntsmanQuestStartId + 3,
-                Title = "Huntsman IV — Press onward",
-                Description = "Sharpen your instincts and prepare for the next hunt.",
-                Requirements = new Dictionary<string, int>(),
-                Rewards = new List<QuestReward>(),
-                ChainKey = HuntsmanChainName
-            };
-
-            quests[HuntsmanQuestStartId + 4] = new QuestDefinition
-            {
-                Id = HuntsmanQuestStartId + 4,
-                Title = "Huntsman V — Apex predator",
-                Description = "Hunt down and slay a pack of wolves.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["wolf.kill"] = 3
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "hat.wolf", Amount = 1 }
-                },
-                ChainKey = HuntsmanChainName
-            };
-
-            quests[HuntsmanQuestStartId + 5] = new QuestDefinition
-            {
-                Id = HuntsmanQuestStartId + 5,
-                Title = "Huntsman VI — Forest predator",
-                Description = "Slay the forest beasts.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["bear.kill"] = 2
-                },
-                Rewards = new List<QuestReward>(),
-                ChainKey = HuntsmanChainName
-            };
-
-            quests[HuntsmanQuestStartId + 6] = new QuestDefinition
-            {
-                Id = HuntsmanQuestStartId + 6,
-                Title = "Huntsman VII — Frozen predator",
-                Description = "Slay the frozen beasts.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["polarbear.kill"] = 2
-                },
-                Rewards = new List<QuestReward>
-                {
-                    new QuestReward { ShortName = "pie.bigcat", Amount = 1 }
-                },
-                ChainKey = HuntsmanChainName
-            };
-
-            quests[HuntsmanQuestStartId + 7] = new QuestDefinition
-            {
-                Id = HuntsmanQuestStartId + 7,
-                Title = "Huntsman VIII — The final hunt!",
-                Description = "Slay the king of the jungle.",
-                Requirements = new Dictionary<string, int>
-                {
-                    ["tiger.kill"] = 1
-                },
-                Rewards = new List<QuestReward>(),
-                ChainKey = HuntsmanChainName,
-                CompletionMessage = Prefix + "By blood and blade, you have earned the title: Huntsman.",
-                CompletionAction = GrantHuntsmanRewards
-            };
-
-            foreach (var quest in quests.Values)
-            {
-                if (string.IsNullOrEmpty(quest.ChainKey) && quest.Id <= StarterQuestFinalId)
-                {
-                    quest.ChainKey = StarterChainKey;
-                }
-
-                quest.HasInventoryTrackedRequirements = quest.Requirements.Keys
-                    .Any(key => InventoryTrackedRequirementKeys.Contains(NormalizeRequirementKey(key)));
-            }
-        }
-
-        // =========================
-        // DUKE QUESTS
-        // =========================
-        private QuestDefinition BuildDukeQuest(int questId)
-        {
-            if (questId == DukeQuestFinalId)
-            {
-                return new QuestDefinition
-                {
-                    Id = DukeQuestFinalId,
-                    Title = "The Duke of the Commonwealth",
-                    Description = "If you are ready, swear fealty before the duke!\nType /quest Swear Fealty",
-                    Requirements = new Dictionary<string, int>
-                    {
-                        ["duke_meet"] = 1
-                    },
-                    Rewards = new List<QuestReward>()
-                };
-            }
-
-            if (questId < DukeQuestFirstId || questId > DukeQuestItemCount)
-            {
-                questId = DukeQuestFirstId;
-            }
-
-            var itemIndex = questId - DukeQuestFirstId;
-            var requirementItem = DukeRequiredItems[itemIndex];
-            var displayName = GetItemDisplayName(requirementItem);
-
-            return new QuestDefinition
-            {
-                Id = questId,
-                Title = $"The Duke – Bring {displayName}",
-                Description = "Bring the required item to prove thy worth.",
-                Requirements = new Dictionary<string, int>
-                {
-                    [requirementItem] = 1
-                },
-                Rewards = new List<QuestReward>()
-            };
-        }
-
-        private void LoadPlayerData()
-        {
-            activeQuests =
-                Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, QuestProgress>>(PlayerDataFile)
-                ?? new Dictionary<ulong, QuestProgress>();
-        }
-
-        private void LoadDukeData()
-        {
-            dukeQuests =
-                Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, QuestProgress>>(DukeDataFile)
-                ?? new Dictionary<ulong, QuestProgress>();
-        }
-
-        private void SavePlayerData()
-        {
-            Interface.Oxide.DataFileSystem.WriteObject(PlayerDataFile, activeQuests);
-        }
-
-        private void SaveDukeData()
-        {
-            Interface.Oxide.DataFileSystem.WriteObject(DukeDataFile, dukeQuests);
-        }
-
-        private bool TryGetActiveQuest(BasePlayer player, out QuestProgress progress, out QuestDefinition quest)
-        {
-            if (player == null)
-            {
-                progress = null;
-                quest = null;
-                return false;
-            }
-
-            progress = GetProgress(player);
-
-            if (!progress.Started || progress.Completed || progress.RewardPending || !quests.TryGetValue(progress.QuestId, out quest))
-            {
-                quest = null;
-                return false;
-            }
-
-            return true;
-        }
-
-        private bool TryGetActiveDukeQuest(BasePlayer player, out QuestProgress progress, out QuestDefinition quest)
-        {
-            progress = null;
-            quest = null;
-
-            if (player == null)
-            {
-                return false;
-            }
-
-            progress = GetDukeProgress(player);
-
-            if (!progress.Started || progress.Completed || progress.RewardPending)
-            {
-                return false;
-            }
-
-            quest = BuildDukeQuest(progress.QuestId);
-            return true;
-        }
-
-        private QuestProgress GetProgress(BasePlayer player)
-        {
-            if (!activeQuests.TryGetValue(player.userID, out var progress))
-            {
-                progress = new QuestProgress { QuestId = 1 };
-                activeQuests[player.userID] = progress;
-            }
-
-            if (!progress.StarterCompleted && progress.Completed && progress.QuestId == StarterQuestFinalId)
-            {
-                progress.StarterCompleted = true;
-            }
-
-            if (progress.Completed && quests.ContainsKey(progress.QuestId + 1))
-            {
-                progress.QuestId++;
-                progress.Progress = new Dictionary<string, int>();
-                progress.InventoryBaseline = new Dictionary<string, int>();
-                progress.Completed = false;
-                progress.RewardPending = false;
-                SavePlayerData();
-                InitializeInventoryBaseline(player, progress, quests[progress.QuestId]);
-            }
-
-            return progress;
-        }
-
-        private QuestProgress GetDukeProgress(BasePlayer player)
-        {
-            if (dukeQuests == null)
-            {
-                dukeQuests = new Dictionary<ulong, QuestProgress>();
-            }
-
-            if (!dukeQuests.TryGetValue(player.userID, out var progress))
-            {
-                progress = new QuestProgress { QuestId = 1 };
-                dukeQuests[player.userID] = progress;
-            }
-
-            return progress;
-        }
-
-        // =========================
-        // GATHER TRACKING
-        // =========================
-        private void OnDispenserGathered(ResourceDispenser dispenser, BaseEntity entity, Item item)
-        {
-            var player = entity.ToPlayer();
-            if (player == null) return;
-
-            if (!TryGetActiveQuest(player, out var progress, out var quest))
-                return;
-
-            var normalizedKey = NormalizeRequirementKey(item.info.shortname);
-
-            HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, normalizedKey);
-
-            if (quest.HasInventoryTrackedRequirements && InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                UpdateInventoryTrackedProgress(player, progress, quest);
-        }
-
-        private void OnItemCraft(ItemCraftTask task, BasePlayer crafter, Item item)
-        {
-            if (task == null || crafter == null) return;
-
-            craftTaskOwners[task] = crafter.userID;
-        }
-
-        private void OnItemCraftFinished(ItemCraftTask task, Item item)
-        {
-            var player = GetCraftingPlayer(task, item);
-            if (player == null) return;
-
-            var overrideKey = item.info.shortname == "box.wooden" ? "box.wooden.crafted" : null;
-            var normalizedKey = NormalizeRequirementKey(item.info.shortname);
-
-            HandleDukeCraftedItemAcquired(player, item.info.shortname, item.amount, overrideKey ?? normalizedKey);
-
-            if (!TryGetActiveQuest(player, out var progress, out var quest))
-                return;
-
-            HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, overrideKey ?? normalizedKey);
-
-            if (quest.HasInventoryTrackedRequirements && InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                UpdateInventoryTrackedProgress(player, progress, quest);
-
-            if (!TaskHasMoreCrafts(task))
-                craftTaskOwners.Remove(task);
-        }
-
-        private void OnItemCraftCancelled(ItemCraftTask task)
-        {
-            if (task == null) return;
-
-            craftTaskOwners.Remove(task);
-        }
-
-        private void OnItemAddedToContainer(ItemContainer container, Item item)
-        {
-            var player = container?.GetOwnerPlayer() ?? container?.entityOwner?.ToPlayer();
-            if (player == null) return;
-
-            if (item?.info?.shortname == null) return;
-
-            var normalizedKey = NormalizeRequirementKey(item.info.shortname);
-
-            if (TryGetActiveQuest(player, out var progress, out var quest))
-            {
-                if (quest.HasInventoryTrackedRequirements)
-                    UpdateInventoryTrackedProgress(player, progress, quest);
-
-                if (ShouldIgnoreContainerGainForGatherQuest(quest, normalizedKey))
-                    return;
-
-                if (InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                    return;
-
-                var requirementOverride = normalizedKey;
-                if (quest.Requirements.ContainsKey("fish.any") && IsFishRequirement(normalizedKey))
-                {
-                    requirementOverride = "fish.any";
-                }
-
-                HandleQuestItemAcquired(player, progress, quest, item.info.shortname, item.amount, requirementOverride);
-            }
-
-            // Duke crafted-item quests should only advance from crafting completion.
-        }
-
-        private void OnItemStacked(Item item, Item target, int amount)
-        {
-            if (amount <= 0)
-                return;
-
-            var player = target?.parent?.GetOwnerPlayer()
-                         ?? target?.GetOwnerPlayer()
-                         ?? item?.GetOwnerPlayer()
-                         ?? target?.parent?.entityOwner?.ToPlayer();
-            if (player == null)
-                return;
-
-            var info = target?.info ?? item?.info;
-            if (info?.shortname == null)
-                return;
-
-            var normalizedKey = NormalizeRequirementKey(info.shortname);
-
-            if (!TryGetActiveQuest(player, out var progress, out var quest))
-                return;
-
-            if (quest.HasInventoryTrackedRequirements)
-                UpdateInventoryTrackedProgress(player, progress, quest);
-
-            if (ShouldIgnoreContainerGainForGatherQuest(quest, normalizedKey))
-                return;
-
-            if (InventoryTrackedRequirementKeys.Contains(normalizedKey))
-                return;
-
-            var requirementOverride = normalizedKey;
-            if (quest.Requirements.ContainsKey("fish.any") && IsFishRequirement(normalizedKey))
-            {
-                requirementOverride = "fish.any";
-            }
-
-            HandleQuestItemAcquired(player, progress, quest, info.shortname, amount, requirementOverride);
-        }
-
-        private bool IsDukeQuestId(int questId) =>
-            questId >= DukeQuestIdOffset + DukeQuestFirstId && questId <= DukeQuestIdOffset + DukeQuestFinalId;
-
-        private int ToDukeQuestInternalId(int questId) => questId - DukeQuestIdOffset;
-
-        private void OnEntityBuilt(Planner planner, GameObject go)
-        {
-            var entity = go.ToBaseEntity();
-            var player = planner?.GetOwnerPlayer();
-            if (entity == null || player == null) return;
-
-            var shortName = entity.ShortPrefabName ?? string.Empty;
-
-            if (shortName.Equals("cupboard.tool.deployed", StringComparison.OrdinalIgnoreCase))
-            {
-                HandleQuestItemAcquired(player, "tool.cupboard", 1);
-            }
-            else if (entity is BuildingBlock)
-            {
-                HandleQuestItemAcquired(player, "building_block", 1);
-            }
-            else if (shortName.IndexOf("furnace", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "furnace.placed", 1);
-            }
-            else if (shortName.IndexOf("door.hinged", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                var normalizedDoor = NormalizeRequirementKey(shortName);
-
-                if (normalizedDoor == "door.hinged.wood" || normalizedDoor == "door.hinged.metal")
-                    HandleQuestItemAcquired(player, shortName, 1, normalizedDoor);
-            }
-            else if (shortName.IndexOf("box.wooden", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, shortName, 1, "box.wooden.placed");
-            }
-            else if (shortName.IndexOf("lock.key", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "lock.key", 1);
-            }
-        }
-
-        private void OnCupboardAuthorize(BuildingPrivlidge privilege, BasePlayer player)
-        {
-            if (privilege == null || player == null) return;
-
-            HandleQuestItemAcquired(player, "tc_auth", 1);
-        }
-
-        private void OnEntityDeath(BaseCombatEntity entity, HitInfo info)
-        {
-            if (entity == null || info == null) return;
-
-            var player = info.InitiatorPlayer;
-            if (player == null) return;
-
-            var shortName = entity.ShortPrefabName ?? string.Empty;
-
-            if (shortName.IndexOf("boar", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "boar.kill", 1);
-            }
-            else if (shortName.IndexOf("chicken", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "chicken.kill", 1);
-            }
-            else if (shortName.IndexOf("stag", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "stag.kill", 1);
-            }
-            else if (shortName.IndexOf("wolf", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "wolf.kill", 1);
-            }
-            else if (shortName.IndexOf("polarbear", StringComparison.OrdinalIgnoreCase) >= 0
-                     || (shortName.IndexOf("polar", StringComparison.OrdinalIgnoreCase) >= 0
-                         && shortName.IndexOf("bear", StringComparison.OrdinalIgnoreCase) >= 0))
-            {
-                HandleQuestItemAcquired(player, "polarbear.kill", 1);
-            }
-            else if (shortName.IndexOf("bear", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "bear.kill", 1);
-            }
-            else if (shortName.IndexOf("tiger", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "tiger.kill", 1);
-            }
-            else if (shortName.IndexOf("barrel", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                HandleQuestItemAcquired(player, "road.barrel", 1);
-            }
-        }
-
-        private void OnRecyclerToggle(Recycler recycler, BasePlayer player)
-        {
-            if (recycler == null || player == null) return;
-
-            HandleQuestItemAcquired(player, "recycler_use", 1);
-        }
-
-        private void HandleQuestItemAcquired(BasePlayer player, QuestProgress progress, QuestDefinition quest, string shortName, int amount, string requirementKeyOverride = null)
-        {
-            if (string.IsNullOrEmpty(shortName) || amount <= 0 || quest == null)
-                return;
-
-            var requirementKey = requirementKeyOverride ?? NormalizeRequirementKey(shortName);
-
-            if (!quest.Requirements.TryGetValue(requirementKey, out var requiredAmount)) return;
-
-            if (!progress.Progress.ContainsKey(requirementKey))
-                progress.Progress[requirementKey] = 0;
-
-            progress.Progress[requirementKey] = Mathf.Min(
-                progress.Progress[requirementKey] + amount,
-                requiredAmount
-            );
-
-            EvaluateQuestProgressFulfillment(player, progress, quest);
-        }
-
-        private void HandleQuestItemAcquired(BasePlayer player, string shortName, int amount, string requirementKeyOverride = null)
-        {
-            if (!TryGetActiveQuest(player, out var progress, out var quest))
-                return;
-
-            HandleQuestItemAcquired(player, progress, quest, shortName, amount, requirementKeyOverride);
-        }
-
-        private void HandleDukeCraftedItemAcquired(BasePlayer player, string shortName, int amount, string requirementKeyOverride = null)
-        {
-            if (!TryGetActiveDukeQuest(player, out var progress, out var quest))
-                return;
-
-            if (string.IsNullOrEmpty(shortName) || amount <= 0)
-                return;
-
-            var requirementKey = requirementKeyOverride ?? NormalizeRequirementKey(shortName);
-            if (!quest.Requirements.TryGetValue(requirementKey, out var requiredAmount))
-                return;
-
-            if (!progress.Progress.ContainsKey(requirementKey))
-                progress.Progress[requirementKey] = 0;
-
-            progress.Progress[requirementKey] = Mathf.Min(
-                progress.Progress[requirementKey] + amount,
-                requiredAmount
-            );
-
-            DrawDukeUI(player, progress, quest);
-
-            if (!HasMetAllRequirements(progress, quest))
-                return;
-
-            TryFinishDukeQuest(player, progress, quest);
-        }
-
-        private void EvaluateQuestProgressFulfillment(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            if (questUiVisible.Contains(player.userID))
-                DrawQuestUi(player, progress, quest);
-
-            if (!HasMetAllRequirements(progress, quest))
-                return;
-
-            TryFinishQuest(player, progress, quest);
-        }
-
-        private void UpdateInventoryTrackedProgress(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            if (player == null || quest == null || !quest.HasInventoryTrackedRequirements)
-                return;
-
-            InitializeInventoryBaseline(player, progress, quest);
-
-            foreach (var req in quest.Requirements)
-            {
-                var normalizedKey = NormalizeRequirementKey(req.Key);
-                if (!InventoryTrackedRequirementKeys.Contains(normalizedKey)) continue;
-
-                var haveNow = GetItemAmount(player, req.Key);
-                var baseline = progress.InventoryBaseline.TryGetValue(req.Key, out var v) ? v : 0;
-
-                var delta = Mathf.Max(0, haveNow - baseline);
-                var currentProgress = progress.Progress.TryGetValue(req.Key, out var current) ? current : 0;
-                progress.Progress[req.Key] = Mathf.Min(Mathf.Max(currentProgress, delta), req.Value);
-            }
-
-            EvaluateQuestProgressFulfillment(player, progress, quest);
-        }
-
-        private void InitializeInventoryBaseline(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            if (player == null || quest == null || !quest.HasInventoryTrackedRequirements)
-                return;
-
-            if (progress.InventoryBaseline == null)
-                progress.InventoryBaseline = new Dictionary<string, int>();
-
-            foreach (var req in quest.Requirements)
-            {
-                var normalizedKey = NormalizeRequirementKey(req.Key);
-                if (!InventoryTrackedRequirementKeys.Contains(normalizedKey)) continue;
-
-                if (progress.InventoryBaseline.ContainsKey(req.Key))
-                    continue;
-
-                var currentAmount = GetItemAmount(player, req.Key);
-                progress.InventoryBaseline[req.Key] = currentAmount;
-            }
-        }
-
-        private bool HasMetAllRequirements(QuestProgress progress, QuestDefinition quest)
-        {
-            foreach (var req in quest.Requirements)
-            {
-                if (!progress.Progress.TryGetValue(req.Key, out var current))
-                    return false;
-
-                if (current < req.Value)
-                    return false;
-            }
-
-            return true;
-        }
-
-        private int GetItemAmount(BasePlayer player, string shortName)
-        {
-            var definition = FindItemDefinitionWithFallback(shortName);
-            if (definition == null) return 0;
-
-            return player.inventory.GetAmount(definition.itemid);
-        }
-
-        private Item FindItemInInventories(BasePlayer player, string shortName)
-        {
-            if (player == null || string.IsNullOrEmpty(shortName))
-                return null;
-
-            var definition = FindItemDefinitionWithFallback(shortName);
-
-            Item FindInContainer(ItemContainer container)
-            {
-                if (container == null)
-                    return null;
-
-                foreach (var item in container.itemList)
-                {
-                    if (item?.info == null)
-                        continue;
-
-                    if (definition != null)
-                    {
-                        if (item.info == definition)
-                            return item;
-                    }
-                    else if (item.info.shortname.Equals(shortName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return item;
-                    }
-                }
-
-                return null;
-            }
-
-            return FindInContainer(player.inventory?.containerMain)
-                ?? FindInContainer(player.inventory?.containerBelt)
-                ?? FindInContainer(player.inventory?.containerWear);
-        }
-
-        // =========================
-        // REWARD GATING
-        // =========================
-        private void TryFinishQuest(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            if (rewardDelayPending.Contains(player.userID))
-                return;
-
-            if (!HasSpaceForRewards(player, quest))
-            {
-                progress.RewardPending = true;
-                SavePlayerData();
-
-                SendReply(player, Prefix + InvFullMsg);
-                return; // 🚫 NO UI, NO REDRAW
-            }
-
-            progress.RewardPending = true;
-            SavePlayerData();
-            rewardDelayPending.Add(player.userID);
-
-            timer.Once(RewardDelaySeconds, () =>
-            {
-                rewardDelayPending.Remove(player.userID);
-
-                if (player == null || !player.IsConnected)
-                    return;
-
-                if (!HasSpaceForRewards(player, quest))
-                {
-                    SendReply(player, Prefix + InvFullMsg);
-                    progress.RewardPending = true;
-                    SavePlayerData();
-                    return;
-                }
-
-                GiveRewards(player, quest);
-
-                bool hasNextQuest = quests.ContainsKey(progress.QuestId + 1);
-
-                if (hasNextQuest)
-                {
-                    progress.QuestId++;
-                    progress.Progress = new Dictionary<string, int>();
-                    progress.InventoryBaseline = new Dictionary<string, int>();
-                    progress.Completed = false;
-                    progress.RewardPending = false;
-                    SavePlayerData();
-
-                    SendReply(player, Prefix + $"Next quest unlocked: {quests[progress.QuestId].Title}");
-                    InitializeInventoryBaseline(player, progress, quests[progress.QuestId]);
-                }
-                else
-                {
-                    progress.Completed = true;
-                    progress.RewardPending = false;
-                    if (quest.ChainKey == StarterChainKey)
-                    {
-                        progress.StarterCompleted = true;
-                    }
-                    SavePlayerData();
-
-                    if (quest.CompletionAction != null)
-                    {
-                        quest.CompletionAction(player);
-                    }
-
-                    if (!string.IsNullOrEmpty(quest.CompletionMessage))
-                    {
-                        SendReply(player, quest.CompletionMessage);
-                    }
-                    else if (quest.ChainKey == StarterChainKey)
-                    {
-                        SendReply(player, BuildStarterCompletionMessage());
-                    }
-                }
-
-                CuiHelper.DestroyUi(player, UiRoot);
-                questUiVisible.Remove(player.userID);
-
-                PlayQuestCompleteSound(player);
-
-                timer.Once(UiSwapDelay, () =>
-                {
-                    if (player == null || !player.IsConnected) return;
-                    CuiHelper.DestroyUi(player, QuestCompleteRoot);
-                    questCompleteVisible.Remove(player.userID);
-                    DrawQuestCompleteUI(player, quest);
-                    questCompleteVisible.Add(player.userID);
-
-                    if (hasNextQuest)
-                    {
-                        timer.Once(UiSwapDelay, () =>
-                        {
-                            if (player == null || !player.IsConnected) return;
-                            CuiHelper.DestroyUi(player, QuestCompleteRoot);
-                            questCompleteVisible.Remove(player.userID);
-                            DrawUI(player);
-                            questUiVisible.Add(player.userID);
-                        });
-                    }
-                    else
-                    {
-                        timer.Once(UiSwapDelay, () =>
-                        {
-                            if (player == null || !player.IsConnected) return;
-                            CuiHelper.DestroyUi(player, QuestCompleteRoot);
-                            questCompleteVisible.Remove(player.userID);
-                        });
-                    }
-                });
-            });
-        }
-
-        private void TryFinishDukeQuest(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            if (progress.Completed || progress.RewardPending)
-                return;
-
-            progress.RewardPending = true;
-            SaveDukeData();
-
-            if (quest.Id < DukeQuestFinalId)
-            {
-                progress.QuestId++;
-                progress.Progress = new Dictionary<string, int>();
-                progress.Completed = false;
-                progress.RewardPending = false;
-                SaveDukeData();
-
-                SendReply(player, Prefix + $"Next quest unlocked: {BuildDukeQuest(progress.QuestId).Title}");
-            }
-            else
-            {
-                GrantEsquireRewards(player);
-
-                progress.Completed = true;
-                progress.RewardPending = false;
-                SaveDukeData();
-
-                SendReply(player, Prefix + "The Duke recognizes thy service. Thou art now an Esquire.");
-            }
-
-            CuiHelper.DestroyUi(player, UiRoot);
-            dukeUiVisible.Remove(player.userID);
-
-            PlayQuestCompleteSound(player);
-            ShowDukeQuestCompleteUI(player, quest);
-            dukeCompleteVisible.Add(player.userID);
-
-            timer.Once(UiSwapDelay, () =>
-            {
-                if (player == null || !player.IsConnected) return;
-
-                CuiHelper.DestroyUi(player, DukeCompleteRoot);
-                dukeCompleteVisible.Remove(player.userID);
-
-                if (!progress.Completed)
-                {
-                    var nextQuest = BuildDukeQuest(progress.QuestId);
-                    DrawDukeUI(player, progress, nextQuest);
-                    dukeUiVisible.Add(player.userID);
-                }
-            });
-        }
-
-        [ChatCommand("reward")]
-        private void CmdReward(BasePlayer player, string cmd, string[] args)
-        {
-            if (player == null) return;
-
-            var progress = GetProgress(player);
-            if (!progress.RewardPending) return;
-
-            TryFinishQuest(player, progress, quests[progress.QuestId]);
-        }
-
-        private void GiveRewards(BasePlayer player, QuestDefinition quest)
-        {
-            foreach (var reward in quest.Rewards)
-            {
-                var definition = FindItemDefinitionWithFallback(reward.ShortName);
-                if (definition == null)
-                {
-                    PrintWarning($"Quest reward item not found: {reward.ShortName}");
-                    continue;
-                }
-
-                var item = ItemManager.Create(definition, reward.Amount);
-                if (item != null)
-                    player.inventory.GiveItem(item);
-            }
-        }
-
-        private void GrantEsquireRewards(BasePlayer player)
-        {
-            if (player == null)
-            {
-                return;
-            }
-
-            permission.AddUserGroup(player.UserIDString, "esquire");
-            permission.GrantUserPermission(player.UserIDString, EsquirePermission, this);
-            permission.GrantUserPermission(player.UserIDString, EsquireTitlePermission, this);
-        }
-
-        private void GrantTidewardenRewards(BasePlayer player)
-        {
-            if (player == null)
-            {
-                return;
-            }
-
-            permission.AddUserGroup(player.UserIDString, "tidewarden");
-        }
-
-        private void GrantHuntsmanRewards(BasePlayer player)
-        {
-            if (player == null)
-            {
-                return;
-            }
-
-            permission.AddUserGroup(player.UserIDString, "huntsman");
-        }
-
-        private bool HasSpaceForRewards(BasePlayer player, QuestDefinition quest)
-        {
-            if (player == null || player.inventory == null)
-                return false;
-
-            var itemCount = 0;
-
-            foreach (var reward in quest.Rewards)
-            {
-                if (ItemManager.FindItemDefinition(reward.ShortName) != null)
-                {
-                    itemCount++;
-                }
-            }
-
-            return player.inventory.containerMain.capacity - player.inventory.containerMain.itemList.Count >= itemCount;
-        }
-
-        private int GetRequiredSlots(ItemDefinition def, int amount)
-        {
-            if (def == null || amount <= 0)
-                return 0;
-
-            int maxStack = def.stackable > 0 ? def.stackable : 1;
-            int fullStacks = amount / maxStack;
-            int remaining = amount % maxStack;
-
-            return fullStacks + (remaining > 0 ? 1 : 0);
-        }
-
-        private int GetRemainingStackSlots(ItemContainer container, ItemDefinition def, int amount)
-        {
-            if (container == null || def == null || amount <= 0)
-                return amount;
-
-            int remaining = amount;
-            int maxStack = def.stackable > 0 ? def.stackable : 1;
-
-            foreach (var item in container.itemList)
-            {
-                if (item == null || item.info != def)
-                    continue;
-
-                int room = maxStack - item.amount;
-                if (room <= 0) continue;
-
-                int used = Math.Min(room, remaining);
-                remaining -= used;
-
-                if (remaining <= 0)
-                    return 0;
-            }
-
-            int emptySlots = container.capacity - container.itemList.Count;
-            if (emptySlots > 0)
-            {
-                int slotCapacity = emptySlots * maxStack;
-                remaining = Math.Max(0, remaining - slotCapacity);
-            }
-
-            return remaining;
-        }
-
-        private void PlayQuestCompleteSound(BasePlayer player)
-        {
-            Effect.server.Run(
-                "assets/prefabs/deployable/research table/effects/research-success.prefab",
-                player.transform.position
-            );
-        }
-
-        // =========================
-        // QUEST COMPLETE BUTTON
-        // =========================
-        [ConsoleCommand("quests.complete.next")]
-        private void CmdQuestCompleteNext(ConsoleSystem.Arg arg)
-        {
-            var player = arg.Player();
-            if (player == null) return;
-
-            CuiHelper.DestroyUi(player, QuestCompleteRoot);
-            questCompleteVisible.Remove(player.userID);
-
-            var progress = GetProgress(player);
-
-            if (progress.Completed && quests.ContainsKey(progress.QuestId + 1))
-            {
-                progress.QuestId++;
-                progress.Progress = new Dictionary<string, int>();
-                progress.Completed = false;
-                progress.RewardPending = false;
-                SavePlayerData();
-            }
-
-            if (quests.ContainsKey(progress.QuestId) && !progress.Completed)
-            {
-                DrawUI(player);
-                questUiVisible.Add(player.userID);
-                return;
-            }
-
-            SendReply(player,
-                Prefix + "Starting quests complete! Do /quest to further your adventures!");
-        }
-
-        [ConsoleCommand("quests.complete.duke.next")]
-        private void CmdQuestCompleteDukeNext(ConsoleSystem.Arg arg)
-        {
-            var player = arg.Player();
-            if (player == null) return;
-
-            CuiHelper.DestroyUi(player, DukeCompleteRoot);
-            dukeCompleteVisible.Remove(player.userID);
-
-            if (TryGetActiveDukeQuest(player, out var dukeProgress, out var dukeQuest))
-            {
-                DrawDukeUI(player, dukeProgress, dukeQuest);
-                dukeUiVisible.Add(player.userID);
-            }
-        }
-
-        // =========================
-        // COMMANDS
-        // =========================
-        [ChatCommand("quest")]
-        private void CmdQuest(BasePlayer player, string cmd, string[] args)
-        {
-            if (player == null) return;
-
-            var progress = GetProgress(player);
-
-            if (!progress.Started)
-            {
-                progress.Started = true;
-                progress.InventoryBaseline = new Dictionary<string, int>();
-                SavePlayerData();
-            }
-
-            EnsureStarterQuestCompletedForUnlockedChains(player, progress);
-            if (quests.ContainsKey(progress.QuestId))
-            {
-                InitializeInventoryBaseline(player, progress, quests[progress.QuestId]);
-            }
-
-            if (args != null && args.Length > 0)
-            {
-                if (!progress.StarterCompleted)
-                {
-                    SendReply(player, Prefix + "Complete the starter quest before starting quest chains.");
-                    return;
-                }
-
-                if (progress.RewardPending)
-                {
-                    SendReply(player, Prefix + "Claim your pending reward before starting a new quest chain.");
-                    return;
-                }
-
-                if (TryGetActiveQuest(player, out _, out _))
-                {
-                    SendReply(player, Prefix + "Finish your current quest before starting a new quest chain.");
-                    return;
-                }
-
-                var input = string.Join(" ", args).Trim();
-                if (IsDukePriceCommand(input))
-                {
-                    TryTurnInDukePrice(player);
-                    return;
-                }
-
-                if (IsDukeChain(input))
-                {
-                    StartDukeQuest(player);
-                    return;
-                }
-
-                if (TryStartQuestChain(player, progress, input))
-                {
-                    return;
-                }
-
-                SendReply(player, Prefix + DevPlaceholderMsg);
-                return;
-            }
-
-            if (questCompleteVisible.Contains(player.userID))
-            {
-                CuiHelper.DestroyUi(player, QuestCompleteRoot);
-                questCompleteVisible.Remove(player.userID);
-                return;
-            }
-
-            if (dukeCompleteVisible.Contains(player.userID))
-            {
-                CuiHelper.DestroyUi(player, DukeCompleteRoot);
-                dukeCompleteVisible.Remove(player.userID);
-                return;
-            }
-
-            if (dukeUiVisible.Contains(player.userID))
-            {
-                CuiHelper.DestroyUi(player, UiRoot);
-                dukeUiVisible.Remove(player.userID);
-                return;
-            }
-
-            if (questUiVisible.Contains(player.userID))
-            {
-                CuiHelper.DestroyUi(player, UiRoot);
-                questUiVisible.Remove(player.userID);
-                return;
-            }
-
-            if (TryGetActiveDukeQuest(player, out var dukeProgress, out var dukeQuest))
-            {
-                DrawDukeUI(player, dukeProgress, dukeQuest);
-                dukeUiVisible.Add(player.userID);
-                return;
-            }
-
-            if (progress.Completed)
-            {
-                SendReply(player, BuildStarterCompletionMessage());
-                return;
-            }
-
-            DrawUI(player);
-            questUiVisible.Add(player.userID);
-        }
-
-        private bool IsDukeChain(string chainName)
-        {
-            if (string.IsNullOrWhiteSpace(chainName))
-            {
-                return false;
-            }
-
-            return chainName.Equals("duke", StringComparison.OrdinalIgnoreCase)
-                || chainName.Equals(DukeChainName, StringComparison.OrdinalIgnoreCase)
-                || chainName.Replace(" ", string.Empty).Equals(DukeChainName, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private bool TryStartQuestChain(BasePlayer player, QuestProgress progress, string input)
-        {
-            if (player == null || progress == null || string.IsNullOrWhiteSpace(input))
-            {
-                return false;
-            }
-
-            var normalized = input.Trim().Replace(" ", string.Empty);
-
-            if (normalized.Equals(TidewardenChainName, StringComparison.OrdinalIgnoreCase)
-                || normalized.Equals("fisherman", StringComparison.OrdinalIgnoreCase))
-            {
-                StartQuestChain(player, progress, TidewardenQuestStartId);
-                return true;
-            }
-
-            if (normalized.Equals(HuntsmanChainName, StringComparison.OrdinalIgnoreCase)
-                || normalized.Equals("hunter", StringComparison.OrdinalIgnoreCase))
-            {
-                StartQuestChain(player, progress, HuntsmanQuestStartId);
-                return true;
-            }
-
-            return false;
-        }
-
-        private void StartQuestChain(BasePlayer player, QuestProgress progress, int questId)
-        {
-            if (!quests.ContainsKey(questId))
-            {
-                SendReply(player, Prefix + "That quest chain is not available yet.");
-                return;
-            }
-
-            progress.QuestId = questId;
-            progress.Progress = new Dictionary<string, int>();
-            progress.InventoryBaseline = new Dictionary<string, int>();
-            progress.Completed = false;
-            progress.RewardPending = false;
-            progress.Started = true;
-            SavePlayerData();
-
-            CuiHelper.DestroyUi(player, UiRoot);
-            questUiVisible.Remove(player.userID);
-
-            InitializeInventoryBaseline(player, progress, quests[progress.QuestId]);
-            DrawUI(player);
-            questUiVisible.Add(player.userID);
-        }
-
-        private void EnsureStarterQuestCompletedForUnlockedChains(BasePlayer player, QuestProgress progress)
-        {
-            if (player == null || progress == null || progress.Completed)
-                return;
-
-            if (!dukeQuests.TryGetValue(player.userID, out var dukeProgress))
-                return;
-
-            if (!dukeProgress.Started && !dukeProgress.Completed && dukeProgress.QuestId <= DukeQuestFirstId)
-                return;
-
-            progress.Completed = true;
-            progress.RewardPending = false;
-            progress.StarterCompleted = true;
-            SavePlayerData();
-        }
-
-        private bool IsDukePriceCommand(string input)
-        {
-            if (string.IsNullOrWhiteSpace(input))
-                return false;
-
-            var normalized = input.Trim().ToLowerInvariant().Replace("’", "'");
-            return normalized.Equals(DukePriceCommand, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private void StartDukeQuest(BasePlayer player)
-        {
-            var progress = GetDukeProgress(player);
-            var quest = BuildDukeQuest(progress.QuestId);
-
-            if (progress.Completed)
-            {
-                SendReply(player, Prefix + "Thou hast already earned the favor of The Duke.");
-                return;
-            }
-
-            if (!progress.Started)
-            {
-                progress.Started = true;
-                SaveDukeData();
-            }
-
-            CuiHelper.DestroyUi(player, UiRoot);
-            questUiVisible.Remove(player.userID);
-
-            DrawDukeUI(player, progress, quest);
-            dukeUiVisible.Add(player.userID);
-        }
-
-        private bool HasDukeOfferings(BasePlayer player)
-        {
-            if (player == null)
-                return false;
-
-            foreach (var itemName in DukeRequiredItems)
-            {
-                if (FindItemInInventories(player, itemName) == null)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        private void RemoveDukeOfferings(BasePlayer player)
-        {
-            foreach (var itemName in DukeRequiredItems)
-            {
-                var item = FindItemInInventories(player, itemName);
-                if (item != null)
-                {
-                    item.Remove(1);
-                }
-            }
-        }
-
-        private void TryTurnInDukePrice(BasePlayer player)
-        {
-            if (player == null)
-            {
-                return;
-            }
-
-            if (!TryGetActiveDukeQuest(player, out var progress, out var quest) || quest.Id != DukeQuestFinalId)
-            {
-                SendReply(player, Prefix + "must complete \"The Duke\" Quest Chain");
-                return;
-            }
-
-            if (!HasDukeOfferings(player))
-            {
-                SendReply(player, "You have not yet gathered all offerings for the Duke.");
-                return;
-            }
-
-            RemoveDukeOfferings(player);
-            progress.Progress["duke_meet"] = 1;
-            SaveDukeData();
-
-            if (dukeUiVisible.Contains(player.userID))
-            {
-                DrawDukeUI(player, progress, quest);
-            }
-
-            TryFinishDukeQuest(player, progress, quest);
-        }
-
-        // =========================
-        // ADMIN COMMANDS
-        // =========================
-        [ChatCommand("questreset")]
-        private void CmdQuestReset(BasePlayer player, string cmd, string[] args)
-        {
-            if (!IsAdmin(player))
-            {
-                SendReply(player, Prefix + "You are not an admin.");
-                return;
-            }
-
-            if (args.Length == 0)
-            {
-                var progress = GetProgress(player);
-                if (TryGetActiveDukeQuest(player, out var dukeProgress, out _))
-                {
-                    ResetDukeQuest(player, dukeProgress.QuestId);
-                    SendReply(player, Prefix + $"Reset The Duke quest {DukeQuestIdOffset + dukeProgress.QuestId} for {player.displayName}.");
-                    return;
-                }
-
-                ResetQuest(player, progress.QuestId);
-                SendReply(player, Prefix + $"Reset quest {progress.QuestId} for {player.displayName}.");
-                return;
-            }
-
-            var target = ResolvePlayerTarget(player, args.Length > 1 ? args[1] : args[0]);
-            if (target == null)
-            {
-                SendReply(player, Prefix + "Player not found.");
-                return;
-            }
-
-            int targetQuest;
-            if (args.Length > 1 && !IsDukeChain(args[0]))
-            {
-                if (!int.TryParse(args[0], out targetQuest))
-                {
-                    SendReply(player, Prefix + "Usage: /questreset <questId|The Duke> [player name|steamId|me]");
-                    return;
-                }
-            }
-            else
-            {
-                if (!int.TryParse(args.Length > 1 ? args[1] : args[0], out targetQuest))
-                {
-                    targetQuest = 0;
-                }
-            }
-
-            if (args.Length > 1)
-            {
-                if (IsDukeChain(args[0]))
-                {
-                    ResetDukeQuest(target, ToDukeQuestInternalId(targetQuest));
-                    SendReply(player, Prefix + $"Reset The Duke quest chain for {target.displayName}.");
-                }
-                else
-                {
-                    ResetQuest(target, targetQuest);
-                    SendReply(player, Prefix + $"Reset quest {targetQuest} for {target.displayName}.");
-                }
-                return;
-            }
-
-            if (IsDukeChain(args[0]))
-            {
-                ResetDukeQuest(target, ToDukeQuestInternalId(targetQuest));
-                SendReply(player, Prefix + $"Reset The Duke quest chain for {target.displayName}.");
-                return;
-            }
-
-            ResetQuest(target, targetQuest);
-            SendReply(player, Prefix + $"Reset quest {targetQuest} for {target.displayName}.");
-        }
-
-        private void ResetQuest(BasePlayer target, int questId)
-        {
-            if (!quests.ContainsKey(questId))
-            {
-                SendReply(target, Prefix + $"Quest {questId} not found.");
-                return;
-            }
-
-            var progress = GetProgress(target);
-            progress.QuestId = questId;
-            progress.Progress = new Dictionary<string, int>();
-            progress.InventoryBaseline = new Dictionary<string, int>();
-            progress.Completed = false;
-            progress.RewardPending = false;
-            progress.Started = true;
-            SavePlayerData();
-
-            if (questUiVisible.Contains(target.userID))
-            {
-                CuiHelper.DestroyUi(target, UiRoot);
-                questUiVisible.Remove(target.userID);
-                DrawUI(target);
-                questUiVisible.Add(target.userID);
-            }
-        }
-
-        private void ResetDukeQuest(BasePlayer target, int questId)
-        {
-            if (questId < DukeQuestFirstId || questId > DukeQuestFinalId)
-                questId = DukeQuestFirstId;
-
-            var quest = BuildDukeQuest(questId);
-            dukeQuests[target.userID] = new QuestProgress { QuestId = quest.Id, Started = true };
-            SaveDukeData();
-
-            if (dukeUiVisible.Contains(target.userID))
-            {
-                CuiHelper.DestroyUi(target, UiRoot);
-                dukeUiVisible.Remove(target.userID);
-                DrawDukeUI(target, GetDukeProgress(target), quest);
-                dukeUiVisible.Add(target.userID);
-            }
-        }
-
-        [ChatCommand("questcomplete")]
-        private void CmdQuestComplete(BasePlayer player, string cmd, string[] args)
-        {
-            if (!IsAdmin(player))
-            {
-                SendReply(player, Prefix + "You are not an admin.");
-                return;
-            }
-
-            if (args.Length == 0)
-            {
-                var progress = GetProgress(player);
-                if (TryGetActiveDukeQuest(player, out var dukeProgress, out _))
-                {
-                    ForceCompleteDukeQuest(player, dukeProgress.QuestId);
-                    SendReply(player, Prefix + $"Completed The Duke quest {DukeQuestIdOffset + dukeProgress.QuestId} for {player.displayName}.");
-                    return;
-                }
-
-                ForceCompleteQuest(player, progress.QuestId);
-                SendReply(player, Prefix + $"Completed quest {progress.QuestId} for {player.displayName}.");
-                return;
-            }
-
-            var target = ResolvePlayerTarget(player, args.Length > 1 ? args[1] : args[0]);
-            if (target == null)
-            {
-                SendReply(player, Prefix + "Player not found.");
-                return;
-            }
-
-            int targetQuest;
-            if (args.Length > 1 && !IsDukeChain(args[0]))
-            {
-                if (!int.TryParse(args[0], out targetQuest))
-                {
-                    SendReply(player, Prefix + "Usage: /questcomplete <questId|The Duke> [player name|steamId|me]");
-                    return;
-                }
-            }
-            else
-            {
-                if (!int.TryParse(args.Length > 1 ? args[1] : args[0], out targetQuest))
-                {
-                    targetQuest = 0;
-                }
-            }
-
-            if (args.Length > 1)
-            {
-                if (IsDukeChain(args[0]))
-                {
-                    ForceCompleteDukeQuest(target, ToDukeQuestInternalId(targetQuest));
-                    SendReply(player, Prefix + $"Completed The Duke quest {DukeQuestIdOffset + targetQuest} for {target.displayName}.");
-                }
-                else
-                {
-                    ForceCompleteQuest(target, targetQuest);
-                    SendReply(player, Prefix + $"Completed quest {targetQuest} for {target.displayName}.");
-                }
-                return;
-            }
-
-            if (IsDukeChain(args[0]))
-            {
-                ForceCompleteDukeQuest(target, ToDukeQuestInternalId(targetQuest));
-                SendReply(player, Prefix + $"Completed The Duke quest {DukeQuestIdOffset + targetQuest} for {target.displayName}.");
-                return;
-            }
-
-            ForceCompleteQuest(target, targetQuest);
-            SendReply(player, Prefix + $"Completed quest {targetQuest} for {target.displayName}.");
-        }
-
-        private void ForceCompleteQuest(BasePlayer target, int questId)
-        {
-            if (!quests.TryGetValue(questId, out var quest))
-            {
-                SendReply(target, Prefix + $"Quest {questId} not found.");
-                return;
-            }
-
-            questCompleteVisible.Remove(target.userID);
-
-            var progress = GetProgress(target);
-            progress.QuestId = quest.Id;
-            progress.Progress = new Dictionary<string, int>();
-            progress.InventoryBaseline = new Dictionary<string, int>();
-            progress.Completed = false;
-            progress.RewardPending = false;
-            progress.Started = true;
-
-            foreach (var req in quest.Requirements)
-            {
-                progress.Progress[req.Key] = req.Value;
-            }
-
-            TryFinishQuest(target, progress, quest);
-        }
-
-        private void ForceCompleteDukeQuest(BasePlayer target, int questId)
-        {
-            if (target == null) return;
-
-            var quest = BuildDukeQuest(questId);
-
-            CuiHelper.DestroyUi(target, DukeCompleteRoot);
-            dukeCompleteVisible.Remove(target.userID);
-
-            var progress = GetDukeProgress(target);
-            progress.QuestId = quest.Id;
-            progress.Progress = new Dictionary<string, int>();
-            progress.Started = true;
-            progress.Completed = false;
-            progress.RewardPending = false;
-
-            foreach (var req in quest.Requirements)
-            {
-                progress.Progress[req.Key] = req.Value;
-            }
-
-            SaveDukeData();
-
-            TryFinishDukeQuest(target, progress, quest);
-        }
-
-        // =========================
-        // UI
-        // =========================
-        private void DrawUI(BasePlayer player)
-        {
-            var progress = GetProgress(player);
-            if (!quests.TryGetValue(progress.QuestId, out var quest))
-            {
-                SendReply(player, Prefix + DevPlaceholderMsg);
-                return;
-            }
-
-            if (quest.HasInventoryTrackedRequirements)
-            {
-                InitializeInventoryBaseline(player, progress, quest);
-                UpdateInventoryTrackedProgress(player, progress, quest);
-            }
-
-            if (HasMetAllRequirements(progress, quest))
-            {
-                TryFinishQuest(player, progress, quest);
-                return;
-            }
-
-            DrawQuestUi(player, progress, quest);
-        }
-
-        private void DrawDukeUI(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            DrawQuestUi(player, progress, quest);
-        }
-
-        private void DrawQuestUi(BasePlayer player, QuestProgress progress, QuestDefinition quest)
-        {
-            CuiHelper.DestroyUi(player, UiRoot);
-
-            var lines = BuildDescriptionLines(quest);
-
-            float parchmentHeight = Mathf.Max(LineHeight * 2, lines.Count * LineHeight);
-            float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
-            float offsetY = UiMinOffsetY + HotbarOffsetY;
-
-            var c = new CuiElementContainer();
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {offsetY}", AnchorMax = $"0.61 {offsetY + totalHeight}" }
-            }, "Hud", UiRoot);
-
-            float currentTop = 1f;
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - QuestBarHeight}", AnchorMax = $"1 {currentTop}" }
-            }, UiRoot, QuestBar);
-
-            c.Add(new CuiLabel
-            {
-                Text = { Text = quest.Title, FontSize = QuestFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestBar);
-
-            currentTop -= QuestBarHeight;
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = $"0.85 0.78 0.63 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - parchmentHeight}", AnchorMax = $"1 {currentTop}" }
-            }, UiRoot, Parchment);
-
-            c.Add(new CuiLabel
-            {
-                Text = { Text = string.Join("\n", lines), FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, Parchment);
-
-            currentTop -= parchmentHeight;
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - GoalBarHeight}", AnchorMax = $"1 {currentTop}" }
-            }, UiRoot, GoalBar);
-
-            c.Add(new CuiLabel
-            {
-                Text = { Text = BuildGoalText(progress, quest), FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, GoalBar);
-
-            CuiHelper.AddUi(player, c);
-        }
-
-        // =========================
-        // UI (QUEST COMPLETE)
-        // =========================
-        private void DrawQuestCompleteUI(BasePlayer player, QuestDefinition completedQuest)
-        {
-            CuiHelper.DestroyUi(player, QuestCompleteRoot);
-
-            float parchmentHeight = LineHeight * 2;
-            float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
-            float offsetY = UiMinOffsetY + HotbarOffsetY;
-
-            var c = new CuiElementContainer();
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {offsetY}", AnchorMax = $"0.61 {offsetY + totalHeight}" }
-            }, "Hud", QuestCompleteRoot);
-
-            float currentTop = 1f;
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - QuestBarHeight}", AnchorMax = $"1 {currentTop}" }
-            }, QuestCompleteRoot, QuestCompleteTop);
-
-            c.Add(new CuiLabel
-            {
-                Text = { Text = "QUEST COMPLETE", FontSize = QuestFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteTop);
-
-            currentTop -= QuestBarHeight;
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = $"0.85 0.78 0.63 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - parchmentHeight}", AnchorMax = $"1 {currentTop}" }
-            }, QuestCompleteRoot, QuestCompleteParchment);
-
-            c.Add(new CuiLabel
-            {
-                Text = { Text = completedQuest.Title, FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteParchment);
-
-            currentTop -= parchmentHeight;
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - GoalBarHeight}", AnchorMax = $"1 {currentTop}" }
-            }, QuestCompleteRoot, QuestCompleteBottom);
-
-            c.Add(new CuiLabel
-            {
-                Text = { Text = "Quest Complete", FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteBottom, "QuestsUI.CompleteBottom.Label");
-
-            CuiHelper.AddUi(player, c);
-        }
-
-        private void ShowDukeQuestCompleteUI(BasePlayer player, QuestDefinition completedQuest)
-        {
-            CuiHelper.DestroyUi(player, DukeCompleteRoot);
-
-            float parchmentHeight = LineHeight * 2;
-            float totalHeight = QuestBarHeight + parchmentHeight + GoalBarHeight;
-            float offsetY = UiMinOffsetY + HotbarOffsetY;
-
-            var c = new CuiElementContainer();
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = "0 0 0 0" },
-                RectTransform = { AnchorMin = $"0.38 {offsetY}", AnchorMax = $"0.61 {offsetY + totalHeight}" },
-                CursorEnabled = true
-            }, "Hud", DukeCompleteRoot);
-
-            float currentTop = 1f;
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - QuestBarHeight}", AnchorMax = $"1 {currentTop}" }
-            }, DukeCompleteRoot, QuestCompleteTop);
-
-            c.Add(new CuiLabel
-            {
-                Text = { Text = "QUEST COMPLETE", FontSize = QuestFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteTop);
-
-            currentTop -= QuestBarHeight;
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = $"0.85 0.78 0.63 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - parchmentHeight}", AnchorMax = $"1 {currentTop}" }
-            }, DukeCompleteRoot, QuestCompleteParchment);
-
-            c.Add(new CuiLabel
-            {
-                Text = { Text = completedQuest.Title, FontSize = BodyFontSize, Align = TextAnchor.MiddleCenter, Color = "0.23 0.18 0.12 1" },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
-            }, QuestCompleteParchment);
-
-            currentTop -= parchmentHeight;
-
-            c.Add(new CuiPanel
-            {
-                Image = { Color = $"0.48 0.12 0.12 {UiAlpha}" },
-                RectTransform = { AnchorMin = $"0 {currentTop - GoalBarHeight}", AnchorMax = $"1 {currentTop}" }
-            }, DukeCompleteRoot, QuestCompleteBottom);
-
-            c.Add(new CuiButton
-            {
-                Button = { Color = "0 0 0 0", Command = "quests.complete.duke.next", Close = DukeCompleteRoot },
-                RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
-                Text = { Text = "Next Quest", FontSize = GoalFontSize, Align = TextAnchor.MiddleCenter, Color = "0.95 0.91 0.85 1" }
-            }, QuestCompleteBottom, "QuestsUI.CompleteBottom.Button");
-
-            CuiHelper.AddUi(player, c);
-        }
-
-        // =========================
-        // HELPERS
-        // =========================
-        private bool ShouldIgnoreContainerGainForGatherQuest(QuestDefinition quest, string normalizedKey)
-        {
-            if (quest == null || string.IsNullOrEmpty(normalizedKey))
-                return false;
-
-            if ((quest.Id == 1 || quest.Id == 3) &&
-                (normalizedKey.Equals("wood", StringComparison.OrdinalIgnoreCase) ||
-                 normalizedKey.Equals("stones", StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        private string BuildStarterCompletionMessage()
-        {
-            return "<size=18><color=#D87C2A><b>Starter quest complete!</b></color></size>\n" +
-                   "<color=#FFFFFF>The following quest chains have been unlocked: The Duke, Tidewarden, Huntsman, Diver, Lumberjack, Treasure Hunter, Bounty Hunter, Explorer, Barrel Smasher. Start one with /quest <b>NAME</b>.</color>\n" +
-                   "<color=#AAAAAA>The questing system is still in a very early stage and many quest chains may not be available yet! Leave me feedback in Discord #bug-reports.</color>";
-        }
-
-        private List<string> BuildDescriptionLines(QuestDefinition quest)
-        {
-            var description = string.IsNullOrWhiteSpace(quest.Description)
-                ? MissingDescriptionFallback
-                : quest.Description.Trim();
-
-            var segments = description.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var lines = new List<string>();
-
-            foreach (var segment in segments)
-            {
-                lines.AddRange(WrapText(segment.Trim(), MaxCharsPerLine));
-            }
-            if (lines.Count == 0)
-            {
-                lines.Add(MissingDescriptionFallback);
-            }
-
-            if (lines.Count > MaxLines)
-                lines = lines.GetRange(0, MaxLines);
-
-            return lines;
-        }
-
-        private string BuildGoalText(QuestProgress progress, QuestDefinition quest)
-        {
-            if (quest != null && quest.Id == DukeQuestFinalId && quest.Requirements.ContainsKey("duke_meet"))
-            {
-                return "Goal: Swear Fealty to The Duke!";
-            }
-
-            var sb = new StringBuilder("Goal: ");
-            foreach (var req in quest.Requirements)
-            {
-                int cur = progress.Progress.TryGetValue(req.Key, out var v) ? v : 0;
-                sb.Append($"{GetRequirementDisplayName(req.Key)} {cur}/{req.Value}  ");
-            }
-            return sb.ToString();
-        }
-
-        private string NormalizeRequirementKey(string shortName)
-        {
-            if (string.IsNullOrEmpty(shortName))
-                return shortName;
-
-            if (shortName.EndsWith(".deployed", StringComparison.OrdinalIgnoreCase))
-                shortName = shortName.Substring(0, shortName.Length - ".deployed".Length);
-
-            if (shortName.IndexOf("legacy", StringComparison.OrdinalIgnoreCase) >= 0
-                && shortName.IndexOf("bow", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return "bow.hunting";
-            }
-
-            if (shortName.StartsWith("door.hinged", StringComparison.OrdinalIgnoreCase) || shortName.StartsWith("door.double.hinged", StringComparison.OrdinalIgnoreCase))
-            {
-                if (shortName.IndexOf("wood", StringComparison.OrdinalIgnoreCase) >= 0)
-                    return "door.hinged.wood";
-
-                if (shortName.IndexOf("metal", StringComparison.OrdinalIgnoreCase) >= 0 || shortName.IndexOf("toptier", StringComparison.OrdinalIgnoreCase) >= 0 || shortName.IndexOf("armored", StringComparison.OrdinalIgnoreCase) >= 0)
-                    return "door.hinged.metal";
-            }
-
-            if (shortName.Equals("bow", StringComparison.OrdinalIgnoreCase) || shortName.Equals("weapon.bow", StringComparison.OrdinalIgnoreCase)
-                || shortName.IndexOf("bow.hunting", StringComparison.OrdinalIgnoreCase) >= 0 || shortName.IndexOf("bow.compound", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return "bow.hunting";
-            }
-
-            if (shortName.IndexOf("repair", StringComparison.OrdinalIgnoreCase) >= 0
-                && shortName.IndexOf("bench", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return "repair.bench";
-            }
-
-            switch (shortName)
-            {
-                case "iotable":
-                    return "iotable";
-                default:
-                    return shortName;
-            }
-        }
-
-        private bool IsFishRequirement(string shortName)
-        {
-            if (string.IsNullOrWhiteSpace(shortName))
-                return false;
-
-            switch (shortName)
-            {
-                case "fish.anchovy":
-                case "fish.catfish":
-                case "fish.herring":
-                case "fish.minnows":
-                case "fish.orangeroughy":
-                case "fish.salmon":
-                case "fish.sardine":
-                case "fish.smallshark":
-                case "fish.troutsmall":
-                case "fish.yellowperch":
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        private string BuildRewardLine(QuestDefinition quest)
-        {
-            var sb = new StringBuilder();
-            int shown = 0;
-
-            foreach (var r in quest.Rewards)
-            {
-                if (shown >= 2) break;
-                if (shown > 0) sb.Append("   ");
-                sb.Append($"x{r.Amount} {GetItemDisplayName(r.ShortName)}");
-                shown++;
-            }
-
-            return sb.ToString();
-        }
-
-        private BasePlayer ResolvePlayerTarget(BasePlayer caller, string targetArg)
-        {
-            if (string.IsNullOrEmpty(targetArg) || targetArg.Equals("me", StringComparison.OrdinalIgnoreCase))
-                return caller;
-
-            if (ulong.TryParse(targetArg, out var userId))
-                return BasePlayer.FindAwakeOrSleeping(userId.ToString());
-
-            foreach (var active in BasePlayer.activePlayerList)
-            {
-                if (active.displayName.IndexOf(targetArg, StringComparison.OrdinalIgnoreCase) >= 0)
-                    return active;
-            }
-
-            foreach (var sleeper in BasePlayer.sleepingPlayerList)
-            {
-                if (sleeper.displayName.IndexOf(targetArg, StringComparison.OrdinalIgnoreCase) >= 0)
-                    return sleeper;
-            }
-
-            return null;
-        }
-
-        private List<string> WrapText(string text, int maxChars)
-        {
-            var words = text.Split(' ');
-            var lines = new List<string>();
-            var current = new StringBuilder();
-
-            foreach (var word in words)
-            {
-                if (current.Length + word.Length + 1 > maxChars)
-                {
-                    lines.Add(current.ToString());
-                    current.Clear();
-                }
-
-                if (current.Length > 0)
-                    current.Append(" ");
-
-                current.Append(word);
-            }
-
-            if (current.Length > 0)
-                lines.Add(current.ToString());
-
-            return lines;
-        }
-
-        private BasePlayer GetCraftingPlayer(ItemCraftTask task, Item item)
-        {
-            if (task != null && craftTaskOwners.TryGetValue(task, out var ownerId))
-            {
-                var ownerPlayer = BasePlayer.FindByID(ownerId) ?? BasePlayer.FindSleeping(ownerId);
-                if (ownerPlayer != null) return ownerPlayer;
-            }
-
-            var player = item?.GetOwnerPlayer();
-            if (player != null) return player;
-
-            if (task == null) return null;
-
-            var taskType = task.GetType();
-
-            var taskOwnerProp = taskType.GetProperty("taskOwner");
-            if (taskOwnerProp != null)
-            {
-                player = taskOwnerProp.GetValue(task) as BasePlayer;
-                if (player != null) return player;
-            }
-
-            var ownerProp = taskType.GetProperty("owner");
-            if (ownerProp != null)
-            {
-                player = ownerProp.GetValue(task) as BasePlayer;
-                if (player != null) return player;
-
-                var ownerValue = ownerProp.GetValue(task);
-                var nestedOwner = ownerValue?.GetType().GetProperty("owner")?.GetValue(ownerValue) as BasePlayer;
-                if (nestedOwner != null) return nestedOwner;
-
-                player = ExtractPlayerFromOwner(ownerValue);
-                if (player != null) return player;
-
-                player = FindPlayerFromId(ownerValue);
-                if (player != null) return player;
-            }
-
-            var taskOwnerField = taskType.GetField("taskOwner");
-            if (taskOwnerField != null)
-            {
-                player = taskOwnerField.GetValue(task) as BasePlayer;
-                if (player != null) return player;
-            }
-
-            var ownerField = taskType.GetField("owner");
-            if (ownerField != null)
-            {
-                player = ownerField.GetValue(task) as BasePlayer;
-                if (player != null) return player;
-
-                var ownerValue = ownerField.GetValue(task);
-                var nestedOwner = ownerValue?.GetType().GetProperty("owner")?.GetValue(ownerValue) as BasePlayer;
-                if (nestedOwner != null) return nestedOwner;
-
-                player = ExtractPlayerFromOwner(ownerValue);
-                if (player != null) return player;
-
-                player = FindPlayerFromId(ownerValue);
-                if (player != null) return player;
-            }
-
-            player = FindPlayerFromTask(task);
-            if (player != null) return player;
-
-            return null;
-        }
-
-        private bool TaskHasMoreCrafts(ItemCraftTask task)
-        {
-            if (task == null)
-                return false;
-
-            var taskType = task.GetType();
-
-            var queueAmountField = taskType.GetField("queueAmount");
-            var completedAmountField = taskType.GetField("completedAmount");
-
-            if (queueAmountField?.GetValue(task) is int queued
-                && completedAmountField?.GetValue(task) is int completed)
-            {
-                return queued > completed;
-            }
-
-            var queueAmountProp = taskType.GetProperty("queueAmount");
-            var completedAmountProp = taskType.GetProperty("completedAmount");
-
-            if (queueAmountProp?.GetValue(task) is int queuedProp
-                && completedAmountProp?.GetValue(task) is int completedProp)
-            {
-                return queuedProp > completedProp;
-            }
-
-            var amountField = taskType.GetField("amount");
-            if (amountField?.GetValue(task) is int fieldAmount && fieldAmount > 1)
-                return true;
-
-            var amountProp = taskType.GetProperty("amount");
-            if (amountProp?.GetValue(task) is int propAmount && propAmount > 1)
-                return true;
-
-            return false;
-        }
-
-        private BasePlayer ExtractPlayerFromOwner(object ownerValue)
-        {
-            if (ownerValue == null) return null;
-
-            var ownerType = ownerValue.GetType();
-
-            var taskOwnerProp = ownerType.GetProperty("taskOwner");
-            if (taskOwnerProp != null)
-            {
-                var player = taskOwnerProp.GetValue(ownerValue) as BasePlayer;
-                if (player != null) return player;
-            }
-
-            var taskOwnerField = ownerType.GetField("taskOwner");
-            if (taskOwnerField != null)
-            {
-                var player = taskOwnerField.GetValue(ownerValue) as BasePlayer;
-                if (player != null) return player;
-            }
-
-            var ownerPlayerProp = ownerType.GetProperty("ownerPlayer");
-            if (ownerPlayerProp != null)
-            {
-                var player = ownerPlayerProp.GetValue(ownerValue) as BasePlayer;
-                if (player != null) return player;
-            }
-
-            var ownerPlayerField = ownerType.GetField("ownerPlayer");
-            if (ownerPlayerField != null)
-            {
-                var player = ownerPlayerField.GetValue(ownerValue) as BasePlayer;
-                if (player != null) return player;
-            }
-
-            var getOwnerPlayerMethod = ownerType.GetMethod("GetOwnerPlayer");
-            if (getOwnerPlayerMethod != null)
-            {
-                var candidate = getOwnerPlayerMethod.Invoke(ownerValue, null) as BasePlayer;
-                if (candidate != null) return candidate;
-            }
-
-            var userIdProp = ownerType.GetProperty("userID") ?? ownerType.GetProperty("userid") ?? ownerType.GetProperty("UserID");
-            if (userIdProp != null)
-            {
-                var player = FindPlayerFromId(userIdProp.GetValue(ownerValue));
-                if (player != null) return player;
-            }
-
-            var userIdField = ownerType.GetField("userID") ?? ownerType.GetField("userid") ?? ownerType.GetField("UserID");
-            if (userIdField != null)
-            {
-                var player = FindPlayerFromId(userIdField.GetValue(ownerValue));
-                if (player != null) return player;
-            }
-
-            return null;
-        }
-
-        private BasePlayer FindPlayerFromTask(ItemCraftTask task)
-        {
-            var taskType = task.GetType();
-
-            var ownerIdProp = taskType.GetProperty("ownerID") ?? taskType.GetProperty("OwnerID") ?? taskType.GetProperty("ownerId");
-            if (ownerIdProp != null)
-            {
-                var player = FindPlayerFromId(ownerIdProp.GetValue(task));
-                if (player != null) return player;
-            }
-
-            var ownerIdField = taskType.GetField("ownerID") ?? taskType.GetField("OwnerID") ?? taskType.GetField("ownerId");
-            if (ownerIdField != null)
-            {
-                var player = FindPlayerFromId(ownerIdField.GetValue(task));
-                if (player != null) return player;
-            }
-
-            return null;
-        }
-
-        private BasePlayer FindPlayerFromId(object idValue)
-        {
-            if (idValue == null) return null;
-
-            ulong id;
-            if (idValue is ulong ulongId)
-            {
-                id = ulongId;
-            }
-            else if (idValue is long longId)
-            {
-                id = (ulong)longId;
-            }
-            else if (idValue is string idString && ulong.TryParse(idString, out var parsed))
-            {
-                id = parsed;
-            }
-            else
-            {
-                return null;
-            }
-
-            var player = BasePlayer.FindByID(id) ?? BasePlayer.FindSleeping(id);
-            return player;
-        }
-
-        private string GetItemDisplayName(string shortName)
-        {
-            var def = FindItemDefinitionWithFallback(shortName);
-            return def != null ? def.displayName.english : shortName;
-        }
-
-        private string GetRequirementDisplayName(string key)
-        {
-            switch (key)
-            {
-                case "boar.kill":
-                    return "Slay Boars";
-                case "chicken.kill":
-                    return "Slay Chickens";
-                case "stag.kill":
-                    return "Slay Stags";
-                case "wolf.kill":
-                    return "Slay Wolves";
-                case "bear.kill":
-                    return "Slay Bears";
-                case "polarbear.kill":
-                    return "Slay Polar Bears";
-                case "tiger.kill":
-                    return "Slay Tigers";
-                case "tc_auth":
-                    return "Authorization";
-                case "building_block":
-                    return "Building pieces";
-                case "road.barrel":
-                    return "Road barrels";
-                case "recycler_use":
-                    return "Recycler";
-                case "furnace.placed":
-                    return "Furnace placed";
-                case "box.wooden.crafted":
-                    return "Boxes crafted";
-                case "box.wooden.placed":
-                    return "Boxes placed";
-                case "door.hinged.wood":
-                    return "Wood door";
-                case "door.hinged.metal":
-                    return "Metal door";
-                case "iotable":
-                    return "Engineering Workbench";
-                case "repair.bench":
-                    return "Repair Bench";
-                case "duke_meet":
-                    return "Swear Fealty to The Duke!";
-                case "fish.any":
-                    return "Catch any fish";
-                default:
-                    return GetItemDisplayName(key);
-            }
-        }
-
-        private ItemDefinition FindItemDefinitionWithFallback(string key)
-        {
-            var def = ItemManager.FindItemDefinition(key);
-            if (def != null)
-                return def;
-
-            if (RewardShortNameAliases.TryGetValue(key, out var mapped))
-            {
-                def = ItemManager.FindItemDefinition(mapped);
-                if (def != null)
-                    return def;
-            }
-
-            foreach (var candidate in ItemManager.itemList)
-            {
-                if (candidate == null) continue;
-
-                if (!string.IsNullOrEmpty(candidate.shortname) && candidate.shortname.Equals(key, StringComparison.OrdinalIgnoreCase))
-                    return candidate;
-            }
-
-            foreach (var candidate in ItemManager.itemList)
-            {
-                if (candidate == null || candidate.displayName == null) continue;
-
-                var name = candidate.displayName.english;
-                if (string.IsNullOrEmpty(name)) continue;
-
-                if (name.Equals(key, StringComparison.OrdinalIgnoreCase))
-                    return candidate;
-
-                if (name.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0)
-                    return candidate;
-            }
-
-            return null;
-        }
-    }
+	[Info("Quests", "Fadir Stave", "1.0.0")]
+	[Description("Supper dupper much more better'r questing plugin")]
+	public class Quests : RustPlugin 
+	{
+		#region ReferencePlugins
+
+		[PluginReference] Plugin RaidableBases;
+
+		private void SendChat(BasePlayer player, string message, ConVar.Chat.ChatChannel channel = ConVar.Chat.ChatChannel.Global)
+		{
+			player.SendConsoleCommand("chat.add", channel, 0, FormatMessageText(message, true));
+		}
+
+		private string FormatMessageText(string message, bool withPrefix = false)
+		{
+			if (string.IsNullOrEmpty(message) || _config?.textStyleSettings == null || !_config.textStyleSettings.useTextStyleCustomization)
+				return message;
+
+			string styled = message;
+			styled = ReplaceColor(styled, "4286f4", _config.textStyleSettings.primaryColorHex);
+			styled = ReplaceColor(styled, "42a1f5", _config.textStyleSettings.secondaryColorHex);
+
+			if (withPrefix && _config.textStyleSettings.useChatPrefix && !string.IsNullOrWhiteSpace(_config.textStyleSettings.chatPrefix))
+				styled = _config.textStyleSettings.chatPrefix + styled;
+
+			if (withPrefix && _config.textStyleSettings.useBold)
+				styled = $"<b>{styled}</b>";
+
+			if (withPrefix && _config.textStyleSettings.useItalic)
+				styled = $"<i>{styled}</i>";
+
+			return styled;
+		}
+
+		private static string ReplaceColor(string message, string sourceHex, string targetHex)
+		{
+			if (string.IsNullOrWhiteSpace(targetHex))
+				return message;
+
+			return Regex.Replace(message, $"<color=#{sourceHex}>", $"<color=#{targetHex}>", RegexOptions.IgnoreCase);
+		}
+
+		private bool IsTeammate(ulong userID, ulong targetID)
+		{
+			return RelationshipManager.ServerInstance.playerToTeam.TryGetValue(userID, out RelationshipManager.PlayerTeam team) && team.members.Contains(targetID);
+		}
+
+		#endregion
+
+		#region Variables
+
+		public static Quests? Instance;
+		private ImageUI _imageUI;
+
+		private Dictionary<long, Quest> _questList = new();
+
+		private Dictionary<ulong, PlayerData> _playersInfo = new();
+		private QuestStatistics _questStatistics = new();
+		private const string PlayerDataFileName = "Quests/PlayerData";
+		private const string StatisticsDataFileName = "Quests/Statistics";
+
+		private class PlayerData
+		{
+			public readonly List<long> CompletedQuestIds = new();
+			public readonly Dictionary<long, double> PlayerQuestCooldowns = new();
+			public readonly List<PlayerQuest> CurrentPlayerQuests = new();
+
+			public double? GetCooldownForQuest(long questId)
+			{
+				return PlayerQuestCooldowns.TryGetValue(questId, out double cooldown) ? cooldown : (double?)null;
+			}
+		}
+
+		#endregion
+
+		#region Lang
+
+		protected override void LoadDefaultMessages()
+		{
+			lang.RegisterMessages(new Dictionary<string, string>
+			{
+				["QUESTS_CopyPasteError"] = "There was a problem with CopyPaste! Contact the Developer!",
+				["QUESTS_CopyPasteSuccessfully"] = "The building has spawned successfully!",
+				["QUESTS_BuildingPasteError"] = "There was a problem with spawning the Building! Contact the Developer!",
+				["QUESTS_MissingOutPost"] = "Your map doesnt have an Outpost Monument. Please use a custom spawn point.",
+				["QUESTS_MissingQuests"]
+					= "You do not have a file with tasks, the plugin will not work correctly! Create one on the Website - https://quests.skyplugins.ru/ or use the included one.",
+				["QUESTS_FileNotLoad"] = "The construction file was not found : {0}. Move it to the copy paste folder",
+				["QUESTS_UI_TASKLIST"] = "Quest List",
+				["QUESTS_UI_Awards"] = "Rewards",
+				["QUESTS_UI_TASKCount"] = "<color=#42a1f5>{0}</color> QUESTS",
+				["QUESTS_UI_CHIPperformed"] = "Completed",
+				["QUESTS_UI_CHIPInProgress"] = "In progress",
+				["QUESTS_UI_QUESTREPEATCAN"] = "Yes",
+				["QUESTS_UI_QUESTREPEATfForbidden"] = "No",
+				["QUESTS_UI_Missing"] = "Missing",
+				["QUESTS_UI_InfoRepeatInCD"] = "Repeat {0}  |  Cooldown {1}  |  Hand in {2}",
+				["QUESTS_UI_QuestNecessary"] = "Needed",
+				["QUESTS_UI_QuestNotNecessary"] = "Not needed",
+				["QUESTS_UI_QuestBtnPerformed"] = "COMPLETED",
+				["QUESTS_UI_QuestBtnTake"] = "TAKE",
+				["QUESTS_UI_QuestBtnPass"] = "COMPLETE",
+				["QUESTS_UI_QuestBtnDelivery"] = "DELIVER",
+				["QUESTS_UI_QuestBtnRefuse"] = "REFUSE",
+				["QUESTS_UI_ACTIVEOBJECTIVES"] = "Objective: {0}",
+				["QUESTS_UI_MiniQLInfo"] = "{0}\nProgress: {1} / {2}\nQuest: {3}",
+				["QUESTS_UI_MiniQLInfoDelivery"] = "{0}\nQuest: {3}",
+				["QUESTS_UI_CMDPosChange"]
+					= "You have successfully changed the position for building within the Outpost.\n(You need to reload the plugin)\nYou can configure the building's rotation in the config",
+				["QUESTS_UI_CMDCustomPosAdd"]
+					= "You have successfully added a custom building position.\n(You need to reload the plugin)\nYou can rotate the building in the config!\nRemember to enable the option to spawn a building on a custom position in the config.",
+				["QUESTS_UI_QuestLimit"] = "You have to many <color=#4286f4>unfinished</color> Quests",
+				["QUESTS_UI_AlreadyTaken"] = "You have already <color=#4286f4>taken</color> this Quest!",
+				["QUESTS_UI_NotPerm"] = "You do not have the rights to perform this Quest.",
+				["QUESTS_UI_AlreadyDone"] = "You have already <color=#4286f4>completed</color> this Quest!",
+				["QUESTS_UI_TookTasks"] = "You have <color=#4286f4>successfully</color> accepted the Quest {0}",
+				["QUESTS_UI_ACTIVECOLDOWN"] = "This Quest is on Cooldown.",
+				["QUESTS_UI_LackOfSpace"] = "Your inventory is full! Clear some space and try again!",
+				["QUESTS_UI_QuestsCompleted"] = "Quest Completed! Enjoy your reward!",
+				["QUESTS_UI_PassedTasks"] = "So this Quest was to much for you? \n Try again later!",
+				["QUESTS_UI_ActiveQuestCount"] = "You have no active Quests.",
+				["QUESTS_Finished_QUEST"] = "You have completed the task: <color=#4286f4>{0}</color>",
+				["QUESTS_Finished_QUEST_ALL"] = "Player <color=#4286f4>{0}</color> just completed a task: <color=#4286f4>{1}</color> and got a reward!",
+				["QUESTS_UI_InsufficientResources"] = "You don't have {0}, you should definitely bring this to Sidorovich",
+				["QUESTS_UI_InsufficientResourcesSkin"] = "You don’t have the required item, you need to bring it to Sidorovich",
+				["QUESTS_UI_NotResourcesAmount"] = "You don't have enough {0}, you need {1}",
+				["QUESTS_SoundLoadErrorExt"] = "The voice file {0} is missing, upload it using this path - (/data/Quests/Sounds). Or remove it from the configuration",
+				["QUESTS_UI_CATEGORY"] = "CATEGORIES",
+				["QUESTS_UI_CATEGORY_ONE"] = "Available tasks",
+				["QUESTS_UI_CATEGORY_TWO"] = "Active tasks",
+				["QUESTS_UI_TASKS_LIST_EMPTY"] = "Quest list is empty",
+				["QUESTS_UI_TASKS_INFO_EMPTY"] = "Select a task to see information about it",
+				["QUESTS_REPEATABLE_QUEST_AVAILABLE_AGAIN"] = "You can participate in the quest \"<color=#4286f4>{0}</color>\" again! \nDon't miss your chance!",
+				["QUESTS_INSUFFICIENT_PERMISSIONS_ERROR"] = "You don't have sufficient permissions to use this command.",
+				["QUESTS_COMMAND_SYNTAX_ERROR"] = "Incorrect syntax! Use: quests.player.reset [steamid64]",
+				["QUESTS_INVALID_PLAYER_ID_INPUT"] = "Invalid input! Please enter a valid player ID.",
+				["QUESTS_NOT_A_STEAM_ID"] = "The entered ID is not a SteamID. Please check and try again.",
+				["QUESTS_PLAYER_PROGRESS_RESET"] = "The player's progress has been successfully reset!",
+				["QUESTS_PLAYER_NOT_FOUND_BY_STEAMID"] = "Player with the specified Steam ID not found.",
+
+			}, this);
+		}
+
+		#endregion
+
+		#region Configuration
+
+		private Configuration _config;
+
+		private class Configuration
+		{
+			public class Settings
+			{
+				[JsonProperty("Max number of concurrent quests")]
+				public int questCount = 3;
+
+				[JsonProperty("Play sound effect upon task completion")]
+				public bool SoundEffect = true;
+
+				[JsonProperty("Effect")]
+				public string Effect = "assets/prefabs/locks/keypad/effects/lock.code.lock.prefab";
+
+				[JsonProperty("Clear player progress when wipe ?")]
+				public bool useWipe = true;
+				[JsonProperty("Clean up player permissions when wiping?")]
+				public bool useWipePermission = true;
+
+				[JsonProperty("Quests file name")]
+				public string questListDataName = "Quest";
+
+				[JsonProperty("Commands to open quest list with progress", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+				public string[] questListProgress = { "qlist" };
+
+
+				[JsonProperty("Notify all players on task completion?")]
+				public bool sandNotifyAllPlayer = false;
+
+			}
+
+			public class TextStyleSettings
+			{
+				[JsonProperty("Enable text style customization")]
+				public bool useTextStyleCustomization = true;
+
+				[JsonProperty("Primary text color hex (without #)")]
+				public string primaryColorHex = "4286f4";
+
+				[JsonProperty("Secondary text color hex (without #)")]
+				public string secondaryColorHex = "42a1f5";
+
+				[JsonProperty("Apply prefix to chat messages")]
+				public bool useChatPrefix = true;
+
+				[JsonProperty("Chat prefix text (rich text supported)")]
+				public string chatPrefix = "<color=#42a1f5>[QUESTS]</color> ";
+
+				[JsonProperty("Apply bold style to chat messages")]
+				public bool useBold = false;
+
+				[JsonProperty("Apply italic style to chat messages")]
+				public bool useItalic = false;
+			}
+
+			[JsonProperty("General Settings")]
+			public Settings settings = new Settings();
+
+			[JsonProperty("Text style settings")]
+			public TextStyleSettings textStyleSettings = new TextStyleSettings();
+
+
+		}
+
+		protected override void LoadConfig()
+		{
+			base.LoadConfig();
+			try
+			{
+				_config = Config.ReadObject<Configuration>();
+				if (_config == null)
+				{
+					throw new Exception();
+				}
+
+				SaveConfig();
+			}
+			catch
+			{
+				for (int i = 0; i < 3; i++)
+				{
+					PrintError("Configuration file is corrupt! Check your config file at https://jsonlint.com/");
+				}
+
+				LoadDefaultConfig();
+			}
+
+			ValidateConfig();
+			SaveConfig();
+		}
+
+		private void ValidateConfig()
+		{
+		}
+
+		protected override void SaveConfig()
+		{
+			Config.WriteObject(_config);
+		}
+
+		protected override void LoadDefaultConfig()
+		{
+			_config = new Configuration();
+		}
+
+		#endregion
+
+		#region QuestData
+
+		private class PlayerQuest
+		{
+			public long ParentQuestID;
+			public QuestType ParentQuestType;
+
+			public ulong UserID;
+
+			public bool Finished;
+			public int Count;
+
+			public void AddCount(int amount = 1)
+			{
+				Count += amount;
+				BasePlayer player = BasePlayer.FindByID(UserID);
+				Quest parentQuest = Instance._questList[ParentQuestID];
+				if (parentQuest.ActionCount <= Count)
+				{
+					Count = parentQuest.ActionCount;
+					if (player != null && player.IsConnected)
+					{
+						if (Instance._config.settings.SoundEffect)
+						{
+							Instance.RunEffect(player, Instance._config.settings.Effect);
+						}
+
+						Instance.SendChat(player, "QUESTS_Finished_QUEST".GetAdaptedMessage(player.UserIDString, parentQuest.GetDisplayName(Instance.lang.GetLanguage(player.UserIDString))));
+
+						if (Instance._config.settings.sandNotifyAllPlayer)
+						{
+							foreach (BasePlayer players in BasePlayer.activePlayerList)
+							{
+								Instance.SendChat(players, "QUESTS_Finished_QUEST_ALL".GetAdaptedMessage( players.UserIDString, player.displayName,
+									parentQuest.GetDisplayName(Instance.lang.GetLanguage(player.UserIDString))));
+							}
+						}
+
+						Interface.CallHook("OnQuestCompleted", player, parentQuest.GetDisplayName(Instance.lang.GetLanguage(player.UserIDString)));
+						Instance._questStatistics.GatherTaskStatistics(TaskType.TaskExecution, ParentQuestID);
+						Instance._questStatistics.GatherTaskStatistics(TaskType.Completed);
+					}
+
+					Finished = true;
+				}
+
+				if (Instance._openMiniQuestListPlayers.Contains(UserID))
+					Instance.UIMiniQuestList(player);
+			}
+		}
+
+		public enum TaskType
+		{
+			Completed,
+			Taken,
+			Declined,
+			TaskExecution
+		}
+
+		private enum QuestType
+		{
+			IQPlagueSkill,
+			IQHeadReward,
+			IQCases,
+			OreBonus,
+			XDChinookIvent,
+			Gather,
+			EntityKill,
+			Craft,
+			Research,
+			Loot,
+			Grade,
+			Swipe,
+			Deploy,
+			PurchaseFromNpc,
+			HackCrate,
+			RecycleItem,
+			Growseedlings,
+			RaidableBases,
+			Fishing,
+			BossMonster,
+			HarborEvent,
+			SatelliteDishEvent,
+			Sputnik,
+			AbandonedBases,
+			Delivery,
+			IQDronePatrol,
+			GasStationEvent,
+			Triangulation,
+			FerryTerminalEvent,
+			Convoy,
+			Caravan,
+			IQDefenderSupply
+		}
+
+		private enum PrizeType
+		{
+			Item,
+			BluePrint,
+			CustomItem,
+			Command
+		}
+
+		private class Quest
+		{
+			internal class Prize
+			{
+				public string PrizeName;
+				public PrizeType PrizeType;
+				public string ItemShortName;
+				public int ItemAmount;
+				public string CustomItemName;
+				public ulong ItemSkinID;
+				public string PrizeCommand;
+				public string CommandImageUrl;
+				public bool IsHidden;
+			}
+
+			public long QuestID;
+			public string QuestDisplayName;
+			public string QuestDisplayNameMultiLanguage;
+			public string QuestDescription;
+			public string QuestDescriptionMultiLanguage;
+			public string QuestMissions;
+			public string QuestMissionsMultiLanguage;
+
+			public string QuestPermission;
+			public QuestType QuestType;
+			public string Target;
+			public int ActionCount;
+			public bool IsRepeatable;
+			public bool IsMultiLanguage;
+			public bool IsReturnItemsRequired;
+			public int Cooldown;
+			
+			[JsonIgnore]
+			public bool IsMoreTarget = false;
+			[JsonIgnore]
+			public string[] Targets;
+			public List<Prize> PrizeList = new List<Prize>();
+
+			public string GetDisplayName(string language) => language == "ru" || IsMultiLanguage == false ? QuestDisplayName : QuestDisplayNameMultiLanguage;
+			public string GetDescription(string language) => language == "ru" || IsMultiLanguage == false ? QuestDescription : QuestDescriptionMultiLanguage;
+			public string GetMissions(string language) => language == "ru" || IsMultiLanguage == false ? QuestMissions : QuestMissionsMultiLanguage;
+		}
+
+		#endregion
+
+
+		#region Hooks
+
+		#region QuestHook
+
+		#region Type Upgrade
+
+		private object OnStructureUpgrade(BaseCombatEntity entity, BasePlayer player, BuildingGrade.Enum grade)
+		{
+			QuestProgress(player.userID, QuestType.Grade, ((int)grade).ToString());
+			return null;
+		}
+
+		#endregion
+
+		#region IQPlagueSkill
+
+		private void StudySkill(BasePlayer player, string name)
+		{
+			QuestProgress(player.userID, QuestType.IQPlagueSkill, name);
+		}
+
+		#endregion
+
+		#region HeadReward
+
+		private void KillHead(BasePlayer player)
+		{
+			QuestProgress(player.userID, QuestType.IQHeadReward);
+		}
+
+		#endregion
+
+		#region IqCase
+
+		private void OnOpenedCase(BasePlayer player, string name)
+		{
+			QuestProgress(player.userID, QuestType.IQCases, name);
+		}
+
+		#endregion
+
+		#region Chinook
+
+		private void LootHack(BasePlayer player)
+		{
+			QuestProgress(player.userID, QuestType.XDChinookIvent);
+		}
+
+		#endregion
+
+		#region Gather
+
+		#region GatherFix
+
+		private void GatherHooksSub()
+		{
+			foreach (string hook in _gatherHooks)
+				Subscribe(hook);
+		}
+
+		private string[] _gatherHooks =
+		{
+			"OnCollectiblePickedup",
+			"OnDispenserGathered",
+			"OnDispenserBonusReceived",
+		};
+
+		
+		
+		#endregion
+
+		private void OnDispenserGathered(ResourceDispenser dispenser, BasePlayer player, Item item)
+		{
+			if(player == null) return;
+			QuestProgress(player.userID, QuestType.Gather, item.info.shortname, "", null, item.amount);
+		}
+		
+		private void OnDispenserBonusReceived(ResourceDispenser dispenser, BasePlayer player, Item item) => OnDispenserGathered(dispenser, player, item);
+
+		private void OnCollectiblePickedup(CollectibleEntity collectible, BasePlayer player, Item item)
+		{
+			if (player == null || item == null)
+				return;
+			
+			QuestProgress(player.userID, QuestType.Gather, item.info.shortname, "", null, item.amount);
+		}
+
+		private void STCanReceiveYield(BasePlayer player, GrowableEntity entity, Item item)
+		{
+			if (player == null || item == null || item.info == null) return;
+			QuestProgress(player.userID, QuestType.Gather, item.info.shortname, "", null, item.amount);
+		}
+
+		private void STCanReceiveYield(BasePlayer player, CollectibleEntity entity, ItemAmount ia)
+		{
+			if (player == null || ia == null || ia.itemDef == null) return;
+			QuestProgress(player.userID, QuestType.Gather, ia.itemDef.shortname, "", null, (int)ia.amount);
+		}
+
+
+
+		#endregion
+
+		#region Craft
+
+		private void OnItemCraftFinished(ItemCraftTask task, Item item, ItemCrafter crafter)
+		{
+			QuestProgress(crafter.owner.userID, QuestType.Craft, task.blueprint.targetItem.shortname, "", null, item.amount);
+		}
+
+		#endregion
+
+		#region Research
+
+		private void OnTechTreeNodeUnlocked(Workbench workbench, TechTreeData.NodeInstance node, BasePlayer player)
+		{
+			QuestProgress(player.userID, QuestType.Research, node.itemDef.shortname);
+		}
+
+		private void OnItemResearched(ResearchTable table, int amountToConsume)
+		{
+			QuestProgress(table.LastLootedBy, QuestType.Research, table.GetTargetItem().info.shortname);
+		}
+
+		#endregion
+
+		#region Deploy
+
+		private void OnEntityBuilt(Planner plan, GameObject go)
+		{
+			if(plan == null) return;
+			BasePlayer player = plan.GetOwnerPlayer();
+			if (player == null || go == null || plan.GetItem() == null)
+			{
+				return;
+			}
+			BaseEntity ent = go.ToBaseEntity();
+			if (ent == null || ent.skinID == 11543256361)
+			{
+				return;
+			}
+			
+			QuestProgress(player.userID, QuestType.Deploy, plan.GetItem().info.shortname);
+		}
+
+		#endregion
+		
+		#region Loot
+
+		#region OnLootEntity
+
+		private HashSet<ulong> Looted = new();
+		
+		private void OnEntityDestroy(BaseEntity entity)
+		{
+			if (entity == null) return;
+			ulong net = entity.net?.ID.Value ?? 0;
+			if (Looted.Contains(net))
+				Looted.Remove(net);
+		}
+		private void OnLootEntity(BasePlayer player, BaseEntity entity)
+		{
+			if (entity == null || player == null)
+				return;
+			ulong netId = entity.net?.ID.Value ?? 0;
+			if (!Looted.Add(netId))
+				return;
+
+
+			switch (entity)
+			{
+				case LootContainer lootContainer:
+					if (lootContainer.inventory != null)
+						QuestProgress(player.userID, QuestType.Loot, "", "", lootContainer.inventory.itemList);
+					break;
+				
+				case LootableCorpse lootableCorpse:
+					if(lootableCorpse.playerSteamID.IsSteamId())
+						return;
+
+					if (lootableCorpse.containers != null)
+					{
+						foreach (ItemContainer container in lootableCorpse.containers)
+							if (container != null)
+								QuestProgress(player.userID, QuestType.Loot, "", "", container.itemList);
+					}
+					break;
+				
+				case DroppedItemContainer droppedItemContainer:
+					if(droppedItemContainer.prefabID != 1519640547 || droppedItemContainer.playerSteamID.IsSteamId())
+						return;
+
+					if (droppedItemContainer.inventory != null)
+						QuestProgress(player.userID, QuestType.Loot, "", "", droppedItemContainer.inventory.itemList);
+					break;
+			}
+		}
+		
+		private void OnContainerDropItems(ItemContainer container)
+		{
+			if (container == null || container.entityOwner == null)
+				return;
+
+			string prefabName = container.entityOwner.ShortPrefabName;
+			if (prefabName == null || (!prefabName.Contains("barrel") && !prefabName.Contains("roadsign")))
+				return;
+
+			if (container.entityOwner is LootContainer lootContainer)
+			{
+				ulong netId = lootContainer.net?.ID.Value ?? 0;
+				if (!Looted.Add(netId))
+					return;
+
+				if (lootContainer.lastAttacker is BasePlayer player)
+				{
+					QuestProgress(player.userID, QuestType.Loot, "", "", lootContainer.inventory.itemList);
+				}
+			}
+		}
+
+		#endregion
+
+		#endregion
+
+		#region Swipe
+
+		private void OnCardSwipe(CardReader cardReader, Keycard card, BasePlayer player)
+		{
+			if (card == null || cardReader == null || player == null) return;
+			if (!cardReader.HasFlag(BaseEntity.Flags.On) && card.accessLevel == cardReader.accessLevel)
+				QuestProgress(player.userID, QuestType.Swipe, card.accessLevel.ToString());
+		}
+
+		#endregion
+
+		#region Section
+		
+		private void OnPlayerDeath(BasePlayer player, HitInfo info)
+		{
+			if (player == null || info == null || !player.userID.IsSteamId())
+				return;
+			BasePlayer attacker = info.InitiatorPlayer;
+			if (attacker == null)
+				return;
+
+			if (IsTeammate(player.userID.Get(), attacker.userID.Get()) || player.userID == attacker.userID)
+				return;
+
+			QuestProgress(attacker.userID, QuestType.EntityKill, "player");
+		}
+		
+		private Dictionary<NetworkableId, ulong> heliCashed = new();
+		private void OnPatrolHelicopterKill(PatrolHelicopter entity, HitInfo info)
+		{
+			if (entity == null || info == null || info.InitiatorPlayer == null)
+				return;
+
+			BasePlayer player = info.InitiatorPlayer;
+			if (player.userID.IsSteamId())
+			{
+				heliCashed[entity.net.ID] = player.userID;
+			}
+		}
+        
+		private void OnEntityKill(PatrolHelicopter entity)
+		{
+			if (entity == null || entity.net == null)
+				return;
+
+			if (heliCashed.TryGetValue(entity.net.ID, out ulong playerId))
+			{
+				QuestProgress(playerId, QuestType.EntityKill, entity.ShortPrefabName.ToLowerInvariant());
+				heliCashed.Remove(entity.net.ID);
+			}
+			else
+			{
+				if (entity.myAI != null && entity.myAI._targetList is { Count: > 0 } targetList)
+				{
+					BasePlayer player = targetList[^1].ply;
+
+					if (player != null && player.userID.IsSteamId())
+					{
+						QuestProgress(player.userID, QuestType.EntityKill, entity.ShortPrefabName.ToLowerInvariant());
+					}
+				}
+			}
+		}
+		
+		private static List<string> excludedNames = new()
+		{
+			"corpse", "servergibs", "player", "rug.bear.deployed"
+		};
+		
+		private void OnEntityDeath(BaseCombatEntity entity, HitInfo info)
+		{
+			try
+			{ 
+				if (entity == null || info == null)
+					return;
+
+				string targetName = entity.ShortPrefabName;
+				
+				if (excludedNames.Contains(targetName))
+					return;
+
+				if (targetName == "testridablehorse")
+					targetName = "horse";
+
+				BasePlayer player = info.InitiatorPlayer;
+
+				if (entity.GetComponent<PatrolHelicopter>() != null)
+					return;
+        
+				if (player != null && !player.IsNpc && entity.ToPlayer() != player)
+					QuestProgress(player.userID, QuestType.EntityKill, targetName.ToLower());
+			}
+			catch (Exception ex)
+			{
+				Debug.LogError($"    : {ex.Message}");
+			}
+		}
+
+
+		#endregion
+
+		#region Section
+		
+
+		void OnNpcGiveSoldItem(NPCVendingMachine machine, Item soldItem, BasePlayer buyer)
+		{
+			QuestProgress(buyer.userID, QuestType.PurchaseFromNpc, soldItem.info.shortname, "", null, soldItem.amount);
+		}
+
+		#endregion
+
+		#region Section
+
+		private void OnCrateHack(HackableLockedCrate crate)
+		{
+			if (crate.originalHackerPlayerId.IsSteamId())
+			{
+				QuestProgress(crate.originalHackerPlayerId, QuestType.HackCrate);
+			}
+		}
+
+		#endregion
+
+		#region Section
+
+		private readonly Dictionary<ulong, BasePlayer> _recyclePlayer = new();
+
+		private void OnRecyclerToggle(Recycler recycler, BasePlayer player)
+		{
+			if (!recycler.IsOn())
+			{
+				if (!_recyclePlayer.TryAdd(recycler.net.ID.Value, player))
+				{
+					_recyclePlayer.Remove(recycler.net.ID.Value);
+					_recyclePlayer.Add(recycler.net.ID.Value, player);
+				}
+			}
+			else if (_recyclePlayer.ContainsKey(recycler.net.ID.Value))
+			{
+				_recyclePlayer.Remove(recycler.net.ID.Value);
+			}
+		}
+		
+		private void OnItemRecycle(Item item, Recycler recycler)
+		{
+			BasePlayer value;
+			if (_recyclePlayer.TryGetValue(recycler.net.ID.Value, out value))
+			{
+				int num2 = 1;
+				if (item.amount > 1)
+				{
+					num2 = Mathf.CeilToInt(Mathf.Min(item.amount, item.info.stackable * 0.1f));
+				}
+				QuestProgress(value.userID, QuestType.RecycleItem, item.info.shortname, "", null, num2);
+			}
+		}
+
+		#endregion
+
+		#region Growseedlings
+		 
+		private void OnGrowableGathered(GrowableEntity plant, Item item, BasePlayer player)
+		{
+			QuestProgress(player.userID, QuestType.Growseedlings, item.info.shortname, "", null, item.amount);
+		}
+
+		#endregion
+
+		#region Raidable Bases (Nivex)
+
+		private void OnRaidableBaseCompleted(Vector3 location, int mode, bool allowPVP, string id, float spawnTime, float despawnTime, float loadingTime, ulong ownerId, BasePlayer owner,
+			List<BasePlayer> raiders)
+		{
+			BasePlayer player = owner ? owner : (raiders?.Count != 0 ? raiders[0] : null);
+			if (player != null)
+			{
+				QuestProgress(player.userID, QuestType.RaidableBases, mode.ToString(), "", null);
+			}
+		}
+
+		#endregion
+
+		#region Fishing
+
+		private void OnFishCatch(Item fish, BaseFishingRod fishingRod, BasePlayer player)
+		{
+			if (player == null || fish == null)
+				return;
+
+			QuestProgress(player.userID, QuestType.Fishing, fish.info.shortname, "", null, fish.amount);
+		}
+
+		#endregion
+
+		#region BossMonster
+
+		private void OnBossKilled(ScientistNPC boss, BasePlayer attacker)
+		{
+			if (boss == null || attacker == null)
+				return;
+
+			QuestProgress(attacker.userID, QuestType.BossMonster, boss.displayName, "", null);
+		}
+
+		#endregion
+
+		#region HarborEvent
+
+		private void OnHarborEventWinner(ulong winnerId)
+		{
+			QuestProgress(winnerId, QuestType.HarborEvent);
+		}
+
+		#endregion
+
+		#region SatelliteDishEvent
+
+		private void OnSatDishEventWinner(ulong winnerId)
+		{
+			QuestProgress(winnerId, QuestType.SatelliteDishEvent);
+		}
+
+		#endregion
+
+		#region Sputnik
+
+		private void OnSputnikEventWin(ulong userID)
+		{
+			QuestProgress(userID, QuestType.Sputnik);
+		}
+
+		#endregion
+
+		#region AbandonedBases
+
+		private void OnAbandonedBaseEnded(Vector3 center, bool allowPVP, List<BasePlayer> intruders)
+		{
+			if (intruders.Count <= 0)
+				return;
+
+			foreach (BasePlayer player in intruders)
+			{
+				QuestProgress(player.userID, QuestType.AbandonedBases);
+			}
+		}
+
+		#endregion
+
+		#region IQDronePatrol
+
+		private void OnDroneKilled(BasePlayer player, Drone drone, string KeyDrone)
+		{
+			if (player == null || drone == null)
+				return;
+
+			QuestProgress(player.userID, QuestType.IQDronePatrol, KeyDrone, "", null);
+		}
+
+		#endregion
+
+		#region IQDefenderSupply
+
+		private void OnLootedDefenderSupply(BasePlayer player, int levelDropInt)
+		{
+			if (player == null)
+				return;
+			
+			QuestProgress(player.userID, QuestType.IQDefenderSupply, levelDropInt.ToString(), "", null);
+		}
+
+		#endregion
+
+		#region GasStationEvent
+
+		private void OnGasStationEventWinner(ulong userID)
+		{
+			QuestProgress(userID, QuestType.GasStationEvent);
+		}
+
+		#endregion
+
+		#region Triangulation 
+
+		private void OnTriangulationWinner(ulong userID)
+		{
+			QuestProgress(userID, QuestType.Triangulation);
+		}
+
+		#endregion
+
+		#region FerryTerminalEvent
+
+		private void OnFerryTerminalEventWinner(ulong userID)
+		{
+			QuestProgress(userID, QuestType.FerryTerminalEvent);
+		}
+
+		#endregion
+
+		#region Convoy
+
+		private void OnConvoyEventWin(ulong userID)
+		{
+			QuestProgress(userID, QuestType.Convoy);
+		}
+
+		#endregion
+
+		#region Caravan
+		
+		private void OnCaravanEventWin(ulong userID)
+		{
+			QuestProgress(userID, QuestType.Caravan);
+		}
+
+		#endregion
+
+		#endregion
+
+
+		private void OnNewSave()
+		{
+			if (_config.settings.useWipe)
+			{
+				_playersInfo?.Clear();
+				SaveData();
+			}
+
+			if (_config.settings.useWipePermission)
+			{
+				ClearPermission();
+			}
+		}
+
+
+		private void Init()
+		{
+			Instance = this;
+			LoadPlayerData();
+			LoadQuestStatisticsData();
+			LoadQuestData();
+		}
+		
+		private void OnServerInitialized()
+		{
+			HashSet<string> chatCommands = new(StringComparer.OrdinalIgnoreCase);
+			if (_config?.settings?.questListProgress != null)
+			{
+				foreach (string command in _config.settings.questListProgress)
+				{
+					if (!string.IsNullOrWhiteSpace(command))
+						chatCommands.Add(command.Trim());
+				}
+			}
+
+			foreach (string command in chatCommands)
+			{
+				if (command.Equals("quest", StringComparison.OrdinalIgnoreCase))
+					continue;
+
+				cmd.AddChatCommand(command, this, nameof(QuestAliasCommand));
+			}
+
+			GatherHooksSub();
+
+			_imageUI = new ImageUI();
+			_imageUI.DownloadImage();
+
+			foreach (BasePlayer player in BasePlayer.activePlayerList)
+				OnPlayerConnected(player);
+		}
+
+		private void CheckPlayerCooldowns(BasePlayer player)
+		{
+			PlayerData playerData;
+			if (_playersInfo.TryGetValue(player.userID, out playerData))
+			{
+				List<long> questsToRemove = Pool.Get<List<long>>();
+
+				foreach (KeyValuePair<long, double> cooldownForQuest in playerData.PlayerQuestCooldowns)
+				{
+					if (CurrentTime() >= cooldownForQuest.Value + 30f)
+					{
+						questsToRemove.Add(cooldownForQuest.Key);
+
+						if (_questList.TryGetValue(cooldownForQuest.Key, out Quest quest))
+						{
+							string userId = player.UserIDString;
+							SendChat(player, "QUESTS_REPEATABLE_QUEST_AVAILABLE_AGAIN".GetAdaptedMessage(userId, quest.GetDisplayName(lang.GetLanguage(userId))));
+						}
+					}
+				}
+
+				foreach (long questId in questsToRemove)
+					playerData.PlayerQuestCooldowns.Remove(questId);
+				
+				Pool.FreeUnmanaged(ref questsToRemove);
+			}
+		}
+
+		private void OnPlayerConnected(BasePlayer player)
+		{
+			ulong UserId = player.userID.Get();
+			PlayerData playerData;
+			if (!_playersInfo.TryGetValue(UserId, out playerData))
+			{
+				_playersInfo.Add(UserId, new PlayerData());
+			}
+			else
+			{
+				List<PlayerQuest> questsToRemove = new();
+
+				foreach (PlayerQuest item in playerData.CurrentPlayerQuests)
+				{
+					KeyValuePair<long, Quest>? currentQuest = null;
+
+					foreach (KeyValuePair<long, Quest> pair in _questList)
+					{
+						if (pair.Key == item.ParentQuestID && pair.Value.QuestType == item.ParentQuestType)
+						{
+							currentQuest = pair;
+							break;
+						}
+					}
+
+					if (currentQuest?.Value == null)
+					{
+						questsToRemove.Add(item);
+					}
+				}
+
+				NextTick(() =>
+				{
+					foreach (PlayerQuest questToRemove in questsToRemove)
+					{
+						playerData.CurrentPlayerQuests.Remove(questToRemove);
+					}
+
+				});
+			}
+		}
+
+		private void OnServerSave()
+		{
+			SaveData();
+		}
+
+		private void OnPlayerDisconnected(BasePlayer player)
+		{
+			ulong UserId = player.userID.Get();
+
+			_openMiniQuestListPlayers.Remove(UserId);
+		}
+
+		private void OnServerShutdown() => Unload();
+
+		private void Unload()
+		{
+			if (IsObjectNull(Instance))
+				return;
+
+			if (_imageUI != null)
+			{
+				_imageUI.UnloadImages();
+				_imageUI = null;
+			}
+
+			Instance = null;
+			SaveData();
+			
+			ClearPlayersData();
+		}
+
+		
+
+
+
+		#endregion
+
+		#region HelpMetods
+
+		#region HelpUnload
+
+		private void UnloadWithMessage(string message)
+		{
+			NextTick(() =>
+			{
+				PrintError(message);
+				Interface.Oxide.UnloadPlugin(Name);
+			});
+		}
+
+
+		private void ClearPlayersData()
+		{
+			foreach (BasePlayer p in BasePlayer.activePlayerList)
+			{
+				CuiHelper.DestroyUi(p, MINI_QUEST_LIST);
+				CuiHelper.DestroyUi(p, LAYERS);
+			}
+		}
+
+		#endregion
+
+		private static bool IsObjectNull(object obj) => ReferenceEquals(obj, null);
+
+		private static string GetFileNameWithoutExtension(string filePath)
+		{
+			int lastDirectorySeparatorIndex = filePath.LastIndexOfAny(new[] { '\\', '/' });
+			int lastDotIndex = filePath.LastIndexOf('.');
+
+			if (lastDotIndex > lastDirectorySeparatorIndex)
+			{
+				return filePath.Substring(lastDirectorySeparatorIndex + 1, lastDotIndex - lastDirectorySeparatorIndex - 1);
+			}
+
+			return filePath.Substring(lastDirectorySeparatorIndex + 1);
+		}
+
+		private void RunEffect(BasePlayer player, string path)
+		{
+			Effect effect = new Effect();
+			Transform transform = player.transform;
+			effect.Init(Effect.Type.Generic, transform.position, transform.forward);
+			effect.pooledString = path;
+			EffectNetwork.Send(effect, player.net.connection);
+		}
+		
+		private void ClearPermission()
+		{
+			string[] allPermissions = permission.GetPermissions();
+			const string permissionPrefix = "Quests.";
+
+			foreach (string perm in allPermissions)
+			{
+				if (perm.Equals($"{permissionPrefix}default", StringComparison.OrdinalIgnoreCase))
+					continue;
+
+				if (perm.StartsWith(permissionPrefix, StringComparison.OrdinalIgnoreCase))
+				{
+					string[] usersWithPermission = permission.GetPermissionUsers(perm);
+
+					foreach (string userEntry in usersWithPermission)
+					{
+						string steamId = ExtractSteamId(userEntry);
+						permission.RevokeUserPermission(steamId, perm);
+					}
+				}
+			}
+		}
+
+		private string ExtractSteamId(string userEntry)
+		{
+			int separatorIndex = userEntry.IndexOf('(');
+			return separatorIndex > 0 ? userEntry[..separatorIndex] : userEntry;
+		}
+
+		private static class TimeHelper
+		{
+			public static string FormatTime(TimeSpan time, int maxSubstr = 5, string language = "ru")
+			{
+				return language == "ru" ? FormatTimeRussian(time, maxSubstr) : FormatTimeDefault(time);
+			}
+
+			private static string FormatTimeRussian(TimeSpan time, int maxSubstr)
+			{
+				List<string> substrings = new();
+
+				if (time.Days != 0 && substrings.Count < maxSubstr)
+				{
+					substrings.Add(Format(time.Days, ""));
+				}
+
+				if (time.Hours != 0 && substrings.Count < maxSubstr)
+				{
+					substrings.Add(Format(time.Hours, ""));
+				}
+
+				if (time.Minutes != 0 && substrings.Count < maxSubstr)
+				{
+					substrings.Add(Format(time.Minutes, ""));
+				}
+
+				if (time.Days == 0 && time.Seconds != 0 && substrings.Count < maxSubstr)
+				{
+					substrings.Add(Format(time.Seconds, ""));
+				}
+
+				if (substrings.Count == 0)
+				{
+					substrings.Add("0");
+				}
+
+				return string.Join(" ", substrings);
+			}
+
+			private static string FormatTimeDefault(TimeSpan time)
+			{
+				List<string> parts = new List<string>();
+
+				if (time.Days > 0)
+				{
+					parts.Add($"{time.Days} day{(time.Days == 1 ? string.Empty : "s")}");
+				}
+
+				if (time.Hours > 0)
+				{
+					parts.Add($"{time.Hours} hour{(time.Hours == 1 ? string.Empty : "s")}");
+				}
+
+				if (time.Minutes > 0)
+				{
+					parts.Add($"{time.Minutes} minute{(time.Minutes == 1 ? string.Empty : "s")}");
+				}
+
+				if (time.Seconds > 0)
+				{
+					parts.Add($"{time.Seconds} second{(time.Seconds == 1 ? string.Empty : "s")}");
+				}
+
+				if (parts.Count == 0)
+				{
+					parts.Add("0 seconds");
+				}
+
+				return string.Join(", ", parts);
+			}
+
+			private static string Format(int units, string form)
+			{
+				return $"{units}{form}";
+			}
+		}
+
+
+		private void LoadPlayerData()
+		{
+			try
+			{
+				_playersInfo = Interface.Oxide.DataFileSystem.ReadObject<Dictionary<ulong, PlayerData>>(PlayerDataFileName) ?? new Dictionary<ulong, PlayerData>();
+			}
+			catch (Exception ex)
+			{
+				PrintWarning($"Failed to read player data file. A new in-memory dataset will be used. Error: {ex.Message}");
+				_playersInfo = new Dictionary<ulong, PlayerData>();
+			}
+		}
+
+		private void SaveData()
+		{
+			Interface.Oxide.DataFileSystem.WriteObject(PlayerDataFileName, _playersInfo);
+			Interface.Oxide.DataFileSystem.WriteObject(StatisticsDataFileName, _questStatistics);
+		}
+
+		private void LoadQuestStatisticsData()
+		{
+			try
+			{
+				_questStatistics = Interface.Oxide.DataFileSystem.ReadObject<QuestStatistics>(StatisticsDataFileName) ?? new QuestStatistics();
+			}
+			catch (Exception ex)
+			{
+				PrintWarning($"Failed to read statistics data file. A new in-memory statistics dataset will be used. Error: {ex.Message}");
+				_questStatistics = new QuestStatistics();
+			}
+		}
+
+		private string GetQuestDataFilePath() => $"{Name}/{_config.settings.questListDataName}";
+
+		private void LoadQuestData()
+		{
+			string questDataPath = GetQuestDataFilePath();
+			if (!Interface.Oxide.DataFileSystem.ExistsDatafile(questDataPath))
+			{
+				List<Quest> defaults = BuildDefaultQuestExamples();
+				Interface.Oxide.DataFileSystem.WriteObject(questDataPath, defaults);
+				Puts($"Quest data file was missing and has been generated with {defaults.Count} example quests: data/{questDataPath}.json");
+			}
+
+			List<Quest> loadedQuests;
+			try
+			{
+				loadedQuests = Interface.Oxide.DataFileSystem.ReadObject<List<Quest>>(questDataPath) ?? new List<Quest>();
+			}
+			catch (Exception ex)
+			{
+				PrintError($"Failed to parse quest data file at data/{questDataPath}.json. File was not modified. Error: {ex.Message}");
+				return;
+			}
+
+			_questList.Clear();
+			foreach (Quest quest in loadedQuests)
+			{
+				if (!TryValidateQuest(quest, out string reason))
+				{
+					PrintWarning($"Skipping invalid quest entry (ID: {quest?.QuestID.ToString() ?? "null"}): {reason}");
+					continue;
+				}
+
+				_questList[quest.QuestID] = quest;
+				if (!string.IsNullOrEmpty(quest.QuestPermission))
+					permission.RegisterPermission($"{Name}.{quest.QuestPermission}", this);
+			}
+		}
+
+		private static bool TryValidateQuest(Quest quest, out string reason)
+		{
+			if (quest == null)
+			{
+				reason = "Quest entry is null";
+				return false;
+			}
+			if (quest.QuestID <= 0)
+			{
+				reason = "QuestID must be greater than 0";
+				return false;
+			}
+			if (string.IsNullOrWhiteSpace(quest.QuestDisplayName))
+			{
+				reason = "QuestDisplayName is required";
+				return false;
+			}
+			if (quest.ActionCount <= 0)
+			{
+				reason = "ActionCount must be greater than 0";
+				return false;
+			}
+			if (quest.PrizeList == null)
+				quest.PrizeList = new List<Quest.Prize>();
+			reason = null;
+			return true;
+		}
+
+		private List<Quest> BuildDefaultQuestExamples()
+		{
+			List<Quest> defaults = new List<Quest>();
+			long questId = 1;
+			foreach (QuestType questType in Enum.GetValues(typeof(QuestType)))
+			{
+				defaults.Add(new Quest
+				{
+					QuestID = questId++,
+					QuestDisplayName = $"{questType} Example",
+					QuestDescription = $"Example quest for {questType}.",
+					QuestMissions = $"Complete {questType} objective",
+					QuestPermission = "default",
+					QuestType = questType,
+					Target = "0",
+					ActionCount = 1,
+					IsRepeatable = true,
+					Cooldown = 0,
+					PrizeList = new List<Quest.Prize>
+					{
+						new Quest.Prize
+						{
+							PrizeType = PrizeType.Item,
+							PrizeName = "Scrap",
+							ItemShortName = "scrap",
+							ItemAmount = 10,
+							IsHidden = false
+						}
+					}
+				});
+			}
+			return defaults;
+		}
+
+		private class QuestStatistics
+		{
+			public int CompletedTasks;
+			public int TakenTasks;
+			public int DeclinedTasks;
+			public Dictionary<long, int> ExecutedByQuest = new Dictionary<long, int>();
+
+			public void GatherTaskStatistics(TaskType taskType, long questId = 0)
+			{
+				switch (taskType)
+				{
+					case TaskType.Completed:
+						CompletedTasks++;
+						break;
+					case TaskType.Taken:
+						TakenTasks++;
+						break;
+					case TaskType.Declined:
+						DeclinedTasks++;
+						break;
+					case TaskType.TaskExecution:
+						if (questId > 0)
+						{
+							if (!ExecutedByQuest.ContainsKey(questId))
+								ExecutedByQuest[questId] = 0;
+							ExecutedByQuest[questId]++;
+						}
+						break;
+				}
+			}
+		}
+
+		private static double CurrentTime()
+		{
+			return Facepunch.Math.Epoch.Current;
+		}
+
+		private Vector3 GetResultVector()
+		{
+			return Vector3.zero;
+		}
+
+		private float GetResultRotation()
+		{
+			return 0f;
+		}
+
+		private float DegreeToRadian(float angle)
+		{
+			return (float)(Math.PI * angle / 180.0f);
+		}
+		private float RadianToDegree(float radians)
+		{
+			return (float)(radians * 180.0f / Math.PI);
+		}
+
+		private void Log(string msg, string file)
+		{
+			LogToFile(file, $"[{DateTime.Now}] {msg}", this);
+		}
+
+		#endregion
+
+		#region NewUi
+
+		private List<ulong> _openMiniQuestListPlayers = new();
+		private const string MINI_QUEST_LIST = "Mini_QuestList";
+		private const string LAYERS = "UI_QuestMain";
+		private const string LAYER_MAIN_BACKGROUND = "UI_QuestMainBackground";
+		private const string QUESTS_CATEGORY_MAIN = "QUESTS_CATEGORY_MAIN";
+
+		#region MainUI
+
+		private void MainUi(BasePlayer player)
+		{
+			CuiElementContainer container = new CuiElementContainer
+			{
+				{
+					new CuiPanel
+					{
+						CursorEnabled = true,
+						Image = { Color = "1 1 1 0" },
+						RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" }
+					},
+					"OverlayNonScaled",
+					LAYERS
+				},
+
+
+				new CuiElement
+				{
+					Name = LAYER_MAIN_BACKGROUND,
+					Parent = LAYERS,
+					Components =
+					{
+						new CuiRawImageComponent { Color = "1 1 1 1", Png = _imageUI.GetImage("1") },
+						new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "1 1" }
+					}
+				},
+
+				new CuiElement
+				{
+					Name = "CloseUIImage",
+					Parent = LAYER_MAIN_BACKGROUND,
+					Components =
+					{
+						new CuiRawImageComponent { Color = "1 1 1 1", Png = _imageUI.GetImage("2") },
+						new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "96.039 87.558", OffsetMax = "135.315 114.647" }
+					}
+				},
+
+				{
+					new CuiButton
+					{
+						Button = { Color = "1 1 1 0", Command = "CloseMainUI" },
+						Text = { Text = "", Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0 0 0 1" },
+						RectTransform = { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "96.039 87.558", OffsetMax = "135.315 114.647" }
+					},
+					LAYER_MAIN_BACKGROUND,
+					"BtnCloseUI"
+				},
+
+				{
+					new CuiLabel
+					{
+						RectTransform = { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "96.227 191.4", OffsetMax = "208.973 211.399" },
+						Text =
+						{
+							Text = "QUESTS_UI_TASKLIST".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleLeft,
+							Color = "0.7169812 0.7169812 0.7169812 1"
+						}
+					},
+					LAYER_MAIN_BACKGROUND,
+					"LabelQuestList"
+				},
+
+				{
+					new CuiLabel
+					{
+						RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-269.184 -102.227", OffsetMax = "-197.242 -72.373" },
+						Text =
+						{
+							Text = "QUESTS_UI_Awards".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1"
+						}
+					},
+					LAYER_MAIN_BACKGROUND,
+					"PrizeTitle"
+				},
+
+				{
+					new CuiLabel
+					{
+						RectTransform = { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "250.187 191.399", OffsetMax = "350.187 211.401" },
+						Text =
+						{
+							Text = "QUESTS_UI_TASKCount".GetAdaptedMessage(player.UserIDString, 0), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleRight,
+							Color = "1 1 1 1"
+						}
+					},
+					LAYER_MAIN_BACKGROUND,
+					"LabelQuestCount", "LabelQuestCount"
+				}
+			};
+
+			CuiHelper.DestroyUi(player, "UI_QuestMain");
+			CuiHelper.AddUi(player, container);
+			Category(player, UICategory.Available);
+			QuestListUI(player, UICategory.Available);
+			QuestInfo(player, 0, UICategory.Available);
+		}
+
+		private void UpdateTasksCount(BasePlayer player, int count)
+		{
+			CuiElementContainer container = new CuiElementContainer
+			{
+				{
+					new CuiLabel
+					{
+						RectTransform = { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "250.187 191.399", OffsetMax = "350.187 211.401" },
+						Text =
+						{
+							Text = "QUESTS_UI_TASKCount".GetAdaptedMessage(player.UserIDString, count), Font = "robotocondensed-regular.ttf", FontSize = 14,
+							Align = TextAnchor.MiddleRight, Color = "1 1 1 1"
+						}
+					},
+					LAYER_MAIN_BACKGROUND,
+					"LabelQuestCount", "LabelQuestCount"
+				}
+			};
+			CuiHelper.AddUi(player, container);
+		}
+
+		#endregion
+
+		#region Category
+
+		private enum UICategory
+		{
+			Available,
+			Taken,
+		}
+
+		private List<Quest> GetQuestsByCategory(UICategory category, ulong playerId)
+		{
+			List<Quest> result = new List<Quest>();
+
+			PlayerData playerData = _playersInfo[playerId];
+			if (playerData == null)
+			{
+				return result;
+			}
+
+			switch (category)
+			{
+				case UICategory.Available:
+					foreach (Quest quest in _questList.Values)
+					{
+						if (!string.IsNullOrEmpty(quest.QuestPermission) && !permission.UserHasPermission(playerId.ToString(), $"{Name}." + quest.QuestPermission)) continue;
+
+						bool isQuestAlreadyTaken = playerData.CurrentPlayerQuests.Exists(pq => pq.ParentQuestID == quest.QuestID);
+						bool isQuestCd = playerData.PlayerQuestCooldowns.ContainsKey(quest.QuestID);
+						bool isQuestAlreadyFinish = playerData.CompletedQuestIds.Contains(quest.QuestID);
+
+						if (!isQuestAlreadyTaken && !isQuestAlreadyFinish && !isQuestCd)
+						{
+							result.Add(quest);
+						}
+					}
+
+					break;
+
+				case UICategory.Taken:
+					foreach (PlayerQuest playerQuest in playerData.CurrentPlayerQuests)
+					{
+						Quest value;
+						if (_questList.TryGetValue(playerQuest.ParentQuestID, out value))
+						{
+							result.Add(value);
+						}
+					}
+
+					foreach (long questId in playerData.PlayerQuestCooldowns.Keys)
+					{
+						Quest value;
+						if (_questList.TryGetValue(questId, out value))
+						{
+							result.Add(value);
+						}
+					}
+
+					break;
+			}
+
+			return result;
+		}
+
+		private void Category(BasePlayer player, UICategory category)
+		{
+			string color1 = category == UICategory.Available ? "0.4509804 0.5529412 0.2705882 0.8392157" : "0.6431373 0.6509804 0.654902 0.4";
+			string color2 = category == UICategory.Taken ? "0.4509804 0.5529412 0.2705882 0.8392157" : "0.6431373 0.6509804 0.654902 0.4";
+			string img = _imageUI.GetImage("16");
+			CuiElementContainer container = new CuiElementContainer();
+
+			container.Add(new CuiPanel
+			{
+				CursorEnabled = false,
+				Image = { Color = "1 1 1 0" },
+				RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-541.65 234.6", OffsetMax = "-284.33 337.6" }
+			}, LAYER_MAIN_BACKGROUND, QUESTS_CATEGORY_MAIN, QUESTS_CATEGORY_MAIN);
+
+			container.Add(new CuiElement
+			{
+				Name = "QUESTS_CATEGORY_SPRITE",
+				Parent = QUESTS_CATEGORY_MAIN,
+				Components =
+				{
+					new CuiRawImageComponent { Color = "0.7529412 0.5137255 0.04705882 1", Sprite = "assets/icons/Favourite_active.png", Material = "assets/icons/iconmaterial.mat", },
+					new CuiRectTransformComponent { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = "1.3 -22.5", OffsetMax = "21.3 -2.5" }
+				}
+			});
+
+			container.Add(new CuiLabel
+			{
+				RectTransform = { AnchorMin = "0.5 1", AnchorMax = "0.5 1", OffsetMin = "-103.66 -25", OffsetMax = "125.915 0" },
+				Text =
+				{
+					Text = "QUESTS_UI_CATEGORY".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-bold.ttf", FontSize = 12, Align = TextAnchor.MiddleLeft,
+					Color = "0.7169812 0.7169812 0.7169812 1"
+				}
+			}, QUESTS_CATEGORY_MAIN, "QUESTS_CATEGORY_TITLE");
+
+
+			container.Add(new CuiElement
+			{
+				Name = "QUESTS_CATEGORY_BTN_1",
+				Parent = QUESTS_CATEGORY_MAIN,
+				Components =
+				{
+					new CuiRawImageComponent { Color = color1, Png = img },
+					new CuiRectTransformComponent { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "0 4.8", OffsetMax = "150 22.8" }
+				}
+			});
+
+			container.Add(new CuiButton
+			{
+				RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+				Button = { Color = "0 0 0 0", Command = category == UICategory.Available ? "" : $"UI_Handler category {UICategory.Available.ToString()}" },
+				Text =
+				{
+					Text = "QUESTS_UI_CATEGORY_ONE".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1"
+				}
+			}, "QUESTS_CATEGORY_BTN_1");
+
+			container.Add(new CuiElement
+			{
+				Name = "QUESTS_CATEGORY_BTN_2",
+				Parent = QUESTS_CATEGORY_MAIN,
+				Components =
+				{
+					new CuiRawImageComponent { Color = color2, Png = img },
+					new CuiRectTransformComponent { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "0 -17.2", OffsetMax = "150 0.8" }
+				}
+			});
+
+			container.Add(new CuiButton
+			{
+				RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+				Button = { Color = "0 0 0 0", Command = category == UICategory.Taken ? "" : $"UI_Handler category {UICategory.Taken.ToString()}" },
+				Text =
+				{
+					Text = "QUESTS_UI_CATEGORY_TWO".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 12, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1"
+				}
+			}, "QUESTS_CATEGORY_BTN_2");
+
+			CuiHelper.DestroyUi(player, QUESTS_CATEGORY_MAIN);
+			CuiHelper.AddUi(player, container);
+		}
+
+		#endregion
+
+		#region QuestList
+
+		private void AddPageButton(string direction, string parentId, string command, CuiElementContainer container)
+		{
+			string buttonName = direction == "UP" ? "UPBTN" : "DOWNBTN";
+			string imageName = direction == "UP" ? "3" : "4";
+			string offsetMin = direction == "UP" ? "182.89 87.565" : "139.598 87.568";
+			string offsetMax = direction == "UP" ? "221.51 114.635" : "178.326 114.632";
+
+			container.Add(new CuiElement
+			{
+				Parent = parentId,
+				Name = buttonName,
+				Components =
+				{
+					new CuiRawImageComponent { Png = _imageUI.GetImage(imageName), Color = "1 1 1 1" },
+					new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = offsetMin, OffsetMax = offsetMax }
+				}
+			});
+
+			container.Add(new CuiButton
+			{
+				RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+				Button = { Color = "0 0 0 0", Command = command },
+				Text = { Text = "" }
+			}, buttonName);
+		}
+
+		private void QuestListUI(BasePlayer player, UICategory category, int page = 0)
+		{
+			List<PlayerQuest> playerQuests = _playersInfo[player.userID].CurrentPlayerQuests;
+			if (playerQuests == null)
+			{
+				return;
+			}
+
+			int y = 0;
+			CuiElementContainer container = new CuiElementContainer
+			{
+				{
+					new CuiPanel
+					{
+						Image = { Color = "0 0 0 0" },
+						RectTransform = { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "96.23 -234.241", OffsetMax = "347.79 181.441" }
+					},
+					LAYER_MAIN_BACKGROUND,
+					"QuestListPanel", "QuestListPanel"
+				}
+			};
+			List<Quest> ql = GetQuestsByCategory(category, player.userID);
+			if (page == 0)
+				UpdateTasksCount(player, ql.Count);
+
+
+			#region PageSettings
+
+			if (page != 0)
+			{
+				AddPageButton("UP", LAYER_MAIN_BACKGROUND, $"UI_Handler page {page - 1} {category.ToString()}", container);
+			}
+
+			if (page + 1 < (int)Math.Ceiling((double)ql.Count / 6))
+			{
+				AddPageButton("DOWN", LAYER_MAIN_BACKGROUND, $"UI_Handler page {page + 1} {category.ToString()}", container);
+			}
+
+			#endregion
+
+			if (ql.Count <= 0)
+			{
+				container.Add(new CuiLabel
+				{
+					RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+					Text =
+					{
+						Text = "QUESTS_UI_TASKS_LIST_EMPTY".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-bold.ttf", FontSize = 15, Align = TextAnchor.MiddleCenter,
+						Color = "1 1 1 1"
+					}
+				}, "QuestListPanel");
+			}
+
+			foreach (Quest item in ql.Page(page, 6))
+			{
+				container.Add(new CuiElement
+				{
+					Name = "Quest",
+					Parent = "QuestListPanel",
+					Components =
+					{
+						new CuiRawImageComponent { Color = $"1 1 1 1", Png = _imageUI.GetImage("5") },
+						new CuiRectTransformComponent
+							{ AnchorMin = "0.5 1", AnchorMax = "0.5 1", OffsetMin = $"-125.78 {-67.933 - (y * 69.413)}", OffsetMax = $"125.78 {-1.06 - (y * 69.413)}" }
+					}
+				});
+				container.Add(new CuiLabel
+				{
+					RectTransform = { AnchorMin = "0.5 1", AnchorMax = "0.5 1", OffsetMin = "-109.661 -33", OffsetMax = "113.14 -12.085" },
+					Text =
+					{
+						Text = item.GetDisplayName(lang.GetLanguage(player.UserIDString)), Font = "robotocondensed-bold.ttf", FontSize = 13, Align = TextAnchor.MiddleLeft, Color = "1 1 1 1"
+					}
+				}, "Quest", "QuestName");
+				if (category == UICategory.Taken)
+				{
+					PlayerQuest foundQuest = playerQuests.Find(quest => quest.ParentQuestID == item.QuestID);
+					if (foundQuest != null)
+					{
+						string img, txt;
+						if (foundQuest.Finished)
+						{
+							img = "15";
+							txt = "QUESTS_UI_CHIPperformed".GetAdaptedMessage(player.UserIDString);
+						}
+						else
+						{
+							img = "14";
+							txt = "QUESTS_UI_CHIPInProgress".GetAdaptedMessage(player.UserIDString);
+						}
+
+						container.Add(new CuiElement
+						{
+							Name = "QuestBar",
+							Parent = "Quest",
+							Components =
+							{
+								new CuiRawImageComponent { Color = "1 1 1 1", Png = _imageUI.GetImage(img) },
+								new CuiRectTransformComponent { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "17.19 -16.717", OffsetMax = "97.902 -2.411" }
+							}
+						});
+						container.Add(new CuiLabel
+						{
+							RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-34.924 -7.153", OffsetMax = "40.356 7.153" },
+							Text = { Text = txt, Font = "robotocondensed-bold.ttf", FontSize = 10, Align = TextAnchor.UpperCenter, Color = "1 1 1 1" }
+						}, "QuestBar", "BarLabel");
+					}
+				}
+
+
+				container.Add(new CuiButton
+				{
+					RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1", OffsetMax = "0 0" },
+					Button = { Color = "0 0 0 0", Command = $"UI_Handler questinfo {item.QuestID} {category.ToString()} {page}" },
+					Text = { Text = "" }
+				}, $"Quest");
+				y++;
+			}
+
+			CuiHelper.DestroyUi(player, "DOWNBTN");
+			CuiHelper.DestroyUi(player, "UPBTN");
+			CuiHelper.AddUi(player, container);
+		}
+
+		#endregion
+
+		#region QuestInfo
+
+		private void QuestInfo(BasePlayer player, long questID, UICategory category, int page = 0)
+		{
+			List<PlayerQuest> playerQuests = _playersInfo[player.userID].CurrentPlayerQuests;
+			if (playerQuests == null)
+			{
+				return;
+			}
+
+			PlayerQuest foundQuest = playerQuests.Find(quest => quest.ParentQuestID == questID);
+			Quest quests = null;
+			Quest value;
+			if (_questList.TryGetValue(questID, out value))
+				quests = value;
+			string playerLaunguage = lang.GetLanguage(player.UserIDString);
+
+			CuiElementContainer container = new CuiElementContainer();
+
+			container.Add(new CuiPanel
+			{
+				Image = { Color = "1 1 1 0" },
+				RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-280.488 -234.241", OffsetMax = "564.144 212.279" }
+			}, LAYER_MAIN_BACKGROUND, "QuestInfoPanel", "QuestInfoPanel");
+
+			if (questID == 0 || quests == null)
+			{
+				container.Add(new CuiLabel
+				{
+					RectTransform = { AnchorMin = "0.5 1", AnchorMax = "0.5 1", OffsetMin = "-398.895 -289.293", OffsetMax = "106.815 -76.2" },
+					Text =
+					{
+						Text = "QUESTS_UI_TASKS_INFO_EMPTY".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 19, Align = TextAnchor.MiddleCenter,
+						Color = "1 1 1 1"
+					}
+				}, "QuestInfoPanel");
+
+				CuiHelper.AddUi(player, container);
+				return;
+			}
+
+
+			container.Add(new CuiLabel
+			{
+				RectTransform = { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = "23.704 -42.956", OffsetMax = "420.496 -16.044" },
+				Text = { Text = quests.GetDisplayName(playerLaunguage), Font = "robotocondensed-bold.ttf", FontSize = 19, Align = TextAnchor.MiddleLeft, Color = "1 1 1 1" }
+			}, "QuestInfoPanel", "QuestName");
+
+			string userepeat = quests.IsRepeatable ? "QUESTS_UI_QUESTREPEATCAN".GetAdaptedMessage(player.UserIDString) : "QUESTS_UI_QUESTREPEATfForbidden".GetAdaptedMessage(player.UserIDString);
+			string useCooldown = quests.Cooldown > 0
+				? TimeHelper.FormatTime(TimeSpan.FromSeconds(quests.Cooldown), 5, playerLaunguage)
+				: "QUESTS_UI_Missing".GetAdaptedMessage(player.UserIDString);
+			string bring = quests.IsReturnItemsRequired ? "QUESTS_UI_QuestNecessary".GetAdaptedMessage(player.UserIDString) : "QUESTS_UI_QuestNotNecessary".GetAdaptedMessage(player.UserIDString);
+			container.Add(new CuiLabel
+			{
+				RectTransform = { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = "23.705 -54.066", OffsetMax = "420.495 -40.134" },
+				Text =
+				{
+					Text = "QUESTS_UI_InfoRepeatInCD".GetAdaptedMessage(player.UserIDString, userepeat, useCooldown, bring), Font = "robotocondensed-regular.ttf", FontSize = 10,
+					Align = TextAnchor.UpperLeft, Color = "0.9607844 0.5843138 0.1960784 1"
+				}
+			}, "QuestInfoPanel", "QuestInfo2");
+
+			container.Add(new CuiLabel
+			{
+				RectTransform = { AnchorMin = "0.5 1", AnchorMax = "0.5 1", OffsetMin = "-398.895 -289.293", OffsetMax = "106.815 -76.2" },
+				Text = { Text = quests.GetDescription(playerLaunguage), Font = "robotocondensed-regular.ttf", FontSize = 16, Align = TextAnchor.UpperLeft, Color = "1 1 1 1" }
+			}, "QuestInfoPanel", "QuestDescription");
+
+			#region QuestButton
+
+			string buttonText = "", imageID = "", command = "", checkBox = "10";
+			double? cooldownForQuest = _playersInfo[player.userID].GetCooldownForQuest(questID);
+
+			if (foundQuest == null)
+			{
+				if (cooldownForQuest.HasValue)
+				{
+					imageID = "6";
+					command = $"UI_Handler coldown";
+				}
+				else
+				{
+					if (!quests.IsRepeatable && _playersInfo[player.userID].CompletedQuestIds.Contains(quests.QuestID))
+					{
+						buttonText = "QUESTS_UI_QuestBtnPerformed".GetAdaptedMessage(player.UserIDString);
+						imageID = "6";
+						command = $"UI_Handler get {questID} {category.ToString()} {page}";
+					}
+					else
+					{
+						buttonText = "QUESTS_UI_QuestBtnTake".GetAdaptedMessage(player.UserIDString);
+						imageID = "7";
+						command = $"UI_Handler get {questID} {category.ToString()} {page}";
+					}
+				}
+			}
+			else if (foundQuest.Finished)
+			{
+				buttonText = "QUESTS_UI_QuestBtnPass".GetAdaptedMessage(player.UserIDString);
+				imageID = "7";
+				command = $"UI_Handler finish {questID} {category.ToString()} {page}";
+				checkBox = "11";
+			}
+			else if (foundQuest.ParentQuestType == QuestType.Delivery)
+			{
+				container.Add(new CuiElement
+				{
+					Name = LAYERS + "QuestButtonImageA",
+					Parent = "QuestInfoPanel",
+					Components =
+					{
+						new CuiRawImageComponent { Color = "1 1 1 1", Png = _imageUI.GetImage("7") },
+						new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = "-416.142 -49.709", OffsetMax = "-306.058 -7.691" }
+					}
+				});
+				
+				container.Add(new CuiButton
+				{
+					Button = { Color = "0 0 0 0", Command = $"UI_Handler finish {questID} {category.ToString()} {page}" },
+					Text = { Text = "QUESTS_UI_QuestBtnDelivery".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+					RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1"}
+				}, LAYERS + "QuestButtonImageA", LAYERS + "ButtonQuestA", LAYERS + "ButtonQuestA");
+				
+				container.Add(new CuiElement
+				{
+					Name = LAYERS + "QuestButtonImageC",
+					Parent = "QuestInfoPanel",
+					Components =
+					{
+						new CuiRawImageComponent { Color = "1 1 1 1", Png = _imageUI.GetImage("6") },
+						new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = "-296.142 -49.709", OffsetMax = "-186.058 -7.691" }
+					}
+				});
+				
+				container.Add(new CuiButton
+				{
+					Button = { Color = "0 0 0 0", Command = $"UI_Handler finish {questID} {category.ToString()} {page} true" },
+					Text = { Text = "QUESTS_UI_QuestBtnRefuse".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+					RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1"}
+				}, LAYERS + "QuestButtonImageC", LAYERS + "ButtonQuestC", LAYERS + "ButtonQuestC");
+			}
+			else
+			{
+				buttonText = "QUESTS_UI_QuestBtnRefuse".GetAdaptedMessage(player.UserIDString);
+				imageID = "6";
+				command = $"UI_Handler finish {questID} {category.ToString()} {page}";
+			}
+
+			if (foundQuest is not { ParentQuestType: QuestType.Delivery })
+			{
+				container.Add(new CuiElement
+				{
+					Name = LAYERS + "QuestButtonImage",
+					Parent = "QuestInfoPanel",
+					Components =
+					{
+						new CuiRawImageComponent { Color = "1 1 1 1", Png = _imageUI.GetImage(imageID) },
+						new CuiRectTransformComponent { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = "-416.142 -49.709", OffsetMax = "-306.058 -7.691" }
+					}
+				});
+
+				if (cooldownForQuest.HasValue)
+				{
+					container.Add(new CuiButton
+					{
+						Button = { Color = "0 0 0 0", Command = command },
+						Text = { Color = "1 1 1 1" },
+						RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-55.039 -21.01", OffsetMax = "55.041 21.009" }
+					}, LAYERS + "QuestButtonImage", LAYERS + "ButtonQuest");
+					
+					container.Add(new CuiElement
+					{
+						Parent = LAYERS + "ButtonQuest",
+						Update = false, 
+						Components =
+						{
+							new CuiCountdownComponent { StartTime = (float)(cooldownForQuest.Value - CurrentTime()), TimerFormat = TimerFormat.HoursMinutesSeconds, DestroyIfDone = true,},
+							new CuiTextComponent { Text = $"%TIME_LEFT%", Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter },
+						}
+					});
+				}
+				else
+				{
+					container.Add(new CuiButton
+					{
+						Button = { Color = "0 0 0 0", Command = command },
+						Text = { Text = buttonText, Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+						RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-55.039 -21.01", OffsetMax = "55.041 21.009" }
+					}, LAYERS + "QuestButtonImage", LAYERS + "ButtonQuest", LAYERS + "ButtonQuest");
+				}
+			}
+
+			#endregion
+
+			#region QuestCheckBox
+
+			container.Add(new CuiElement
+			{
+				Name = "QuestCheckBox",
+				Parent = "QuestInfoPanel",
+				Components =
+				{
+					new CuiRawImageComponent { Color = "1 1 1 1", Png = _imageUI.GetImage("9") },
+					new CuiRectTransformComponent { AnchorMin = "1 0", AnchorMax = "1 0", OffsetMin = "-279.228 1.334", OffsetMax = "-1.217 125.64" }
+				}
+			});
+
+			if (foundQuest?.ParentQuestType != QuestType.Delivery)
+			{
+				container.Add(new CuiElement
+				{
+					Name = "CheckBoxImg",
+					Parent = "QuestCheckBox",
+					Components =
+					{
+						new CuiRawImageComponent { Color = "1 1 1 1", Png = _imageUI.GetImage(checkBox) },
+						new CuiRectTransformComponent { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = "20.729 -35.467", OffsetMax = "38.205 -18.005" }
+					}
+				});
+			}
+			
+
+			container.Add(new CuiLabel
+			{
+				RectTransform = { AnchorMin = "0.5 1", AnchorMax = "0.5 1", OffsetMin = "-91.326 -55.693", OffsetMax = "136.647 -16.904" },
+				Text = { Text = quests.GetMissions(playerLaunguage), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.UpperLeft, Color = "1 1 1 1" }
+			}, "QuestCheckBox", "CheckBoxTxt");
+
+			if (foundQuest != null && foundQuest.ParentQuestType != QuestType.Delivery)
+			{
+				double factor = 278.005 * foundQuest.Count / quests.ActionCount;
+				container.Add(new CuiPanel
+				{
+					CursorEnabled = false,
+					Image = { Color = "0.3843138 0.3686275 0.3843138 0.9137255" },
+					RectTransform = { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "-0.000 -0.153", OffsetMax = $"278.005 40.106" }
+				}, "QuestCheckBox", "QuestProgresBar");
+				container.Add(new CuiPanel
+				{
+					CursorEnabled = false,
+					Image = { Color = "0.4462442 0.8679245 0.5786404 0.6137255" },
+					RectTransform = { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "-0.000 -0.153", OffsetMax = $"{factor} 40.106" }
+				}, "QuestProgresBar");
+				container.Add(new CuiLabel
+				{
+					RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-139.005 -20.129", OffsetMax = "139.005 20.13" },
+					Text = { Text = $"{foundQuest.Count} / {quests.ActionCount}", Font = "robotocondensed-bold.ttf", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" }
+				}, "QuestProgresBar", "Progres");
+			}
+
+			#endregion
+
+			#region PrizeList
+
+			string prizeImage = _imageUI.GetImage("8");
+			int i = 0;
+			foreach (Quest.Prize prize in quests.PrizeList)
+			{
+				if(prize.IsHidden) continue;
+				
+				string prizeLayer = "QuestInfo" + $".{i}";
+				
+				int x = i % 4;
+				int y = i / 4;
+				
+				container.Add(new CuiElement
+				{
+					Name = prizeLayer,
+					Parent = "QuestInfoPanel",
+					Components =
+					{
+						new CuiRawImageComponent { Color = "1 1 1 1", Png = prizeImage },
+						new CuiRectTransformComponent
+						{
+							AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = $"{23.42 + (x * 120.912)} {79.39 - (y * 78.345)}",
+							OffsetMax = $"{129.555 + (x * 120.912)} {125.9 - (y * 78.345)}"
+						}
+					}
+				});
+
+
+				switch (prize.PrizeType)
+				{
+					case PrizeType.Item:
+						container.Add(new CuiElement
+						{
+							Parent = prizeLayer,
+							Components =
+							{
+								new CuiImageComponent { Color = "1 1 1 1", ItemId = ItemManager.FindItemDefinition(prize.ItemShortName).itemid },
+								new CuiRectTransformComponent { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-10.059 -20.625", OffsetMax = "32.941 22.375" }
+							}
+						});
+						break;
+					case PrizeType.BluePrint:
+						container.Add(new CuiElement
+						{
+							Parent = prizeLayer,
+							Components =
+							{
+								new CuiImageComponent { Color = "1 1 1 1", ItemId = ItemManager.FindItemDefinition("blueprintbase").itemid },
+								new CuiRectTransformComponent { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-10.059 -20.625", OffsetMax = "32.941 22.375" }
+							}
+						});
+						container.Add(new CuiElement
+						{
+							Parent = prizeLayer,
+							Components =
+							{
+								new CuiImageComponent { Color = "1 1 1 1", ItemId = ItemManager.FindItemDefinition(prize.ItemShortName).itemid },
+								new CuiRectTransformComponent { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-10.059 -20.625", OffsetMax = "32.941 22.375" }
+							}
+						});
+						break;
+					case PrizeType.CustomItem:
+						container.Add(new CuiElement
+						{
+							Parent = prizeLayer,
+							Components =
+							{
+								new CuiImageComponent { Color = "1 1 1 1", ItemId = ItemManager.FindItemDefinition(prize.ItemShortName).itemid, SkinId = prize.ItemSkinID },
+								new CuiRectTransformComponent { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-10.059 -20.625", OffsetMax = "32.941 22.375" }
+							}
+						});
+						break;
+					case PrizeType.Command:
+						container.Add(new CuiElement
+						{
+							Parent = prizeLayer,
+							Components =
+							{
+								new CuiRawImageComponent { Color = "1 1 1 1", Url = prize.CommandImageUrl },
+								new CuiRectTransformComponent { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-10.059 -20.625", OffsetMax = "32.941 22.375" }
+							}
+						});
+						break;
+					default:
+						throw new ArgumentOutOfRangeException();
+				}
+
+				container.Add(new CuiLabel
+				{
+					RectTransform = { AnchorMin = "1 0", AnchorMax = "1 0", OffsetMin = "-61.669 0.67", OffsetMax = "-5.931 17.33" },
+					Text = { Text = $"x{prize.ItemAmount}", Font = "robotocondensed-regular.ttf", FontSize = 11, Align = TextAnchor.MiddleRight, Color = "1 1 1 1" }
+				}, prizeLayer);
+				
+				if (y == 2)
+				{
+					break;
+				}
+				i++;
+			}
+
+			#endregion
+
+			CuiHelper.AddUi(player, container);
+		}
+
+		#endregion
+
+		#region MiniQuestList
+
+		private void OpenMQL_CMD(BasePlayer player)
+		{
+			if (player == null)
+				return;
+
+			CheckPlayerCooldowns(player);
+			MainUi(player);
+		}
+
+		[ChatCommand("quest")]
+		private void QuestChatCommand(BasePlayer player, string command, string[] args)
+		{
+			if (args != null && args.Length > 0 && args[0].Equals("track", StringComparison.OrdinalIgnoreCase))
+			{
+				ToggleMiniQuestTracking(player);
+				return;
+			}
+
+			OpenMQL_CMD(player);
+		}
+
+
+		private void QuestAliasCommand(BasePlayer player, string command, string[] args)
+		{
+			OpenMQL_CMD(player);
+		}
+		private void ToggleMiniQuestTracking(BasePlayer player)
+		{
+			if (player == null)
+				return;
+
+			if (_openMiniQuestListPlayers.Contains(player.userID))
+			{
+				_openMiniQuestListPlayers.Remove(player.userID);
+				CuiHelper.DestroyUi(player, MINI_QUEST_LIST);
+				return;
+			}
+
+			UIMiniQuestList(player);
+		}
+
+		private void UIMiniQuestList(BasePlayer player, int page = 0)
+		{
+			List<PlayerQuest> playerQuests = _playersInfo[player.userID].CurrentPlayerQuests;
+			if (playerQuests == null)
+			{
+				return;
+			}
+
+			if (playerQuests.Count == 0)
+			{
+				SendReply(player, FormatMessageText("QUESTS_UI_ActiveQuestCount".GetAdaptedMessage(player.UserIDString), true));
+				if (_openMiniQuestListPlayers.Contains(player.userID))
+				{
+					_openMiniQuestListPlayers.Remove(player.userID);
+				}
+
+				return;
+			}
+
+			if (!_openMiniQuestListPlayers.Contains(player.userID))
+			{
+				_openMiniQuestListPlayers.Add(player.userID);
+			}
+
+			playerQuests.Sort(delegate(PlayerQuest x, PlayerQuest y)
+			{
+				if (x.Finished && !y.Finished) return -1;
+				if (!x.Finished && y.Finished) return 1;
+				return 0;
+			});
+			string playerLaunguage = lang.GetLanguage(player.UserIDString);
+			const int size = 72;
+			string image = _imageUI.GetImage("5");
+			string imageTwo = _imageUI.GetImage("13");
+			int questCount = playerQuests.Count, qc = -72 * questCount;
+			double ds = 207.912 + qc;
+			CuiElementContainer container = new CuiElementContainer
+			{
+				{
+					new CuiPanel
+					{
+						CursorEnabled = false,
+						Image = { Color = "1 1 1 0" },
+						RectTransform = { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = $"0 {ds}", OffsetMax = "304.808 303.288" }
+					},
+					"Overlay",
+					MINI_QUEST_LIST, MINI_QUEST_LIST
+				},
+
+				{
+					new CuiButton
+					{
+						Button = { Color = "0 0 0 0", Command = "CloseMiniQuestList" },
+						Text = { Text = "x", Font = "robotocondensed-regular.ttf", FontSize = 15, Align = TextAnchor.MiddleCenter, Color = "1 0 0 1" },
+						RectTransform = { AnchorMin = "1 1", AnchorMax = "1 1", OffsetMin = "-20 -20", OffsetMax = "0 0" }
+					},
+					MINI_QUEST_LIST,
+					"MiniQuestClosseBtn"
+				},
+				{
+					new CuiLabel
+					{
+						RectTransform = { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = "3.825 -23.035", OffsetMax = "173.821 0" },
+						Text =
+						{
+							Text = "QUESTS_UI_ACTIVEOBJECTIVES".GetAdaptedMessage(player.UserIDString, playerQuests.Count), Font = "robotocondensed-bold.ttf", FontSize = 12,
+							Align = TextAnchor.MiddleLeft, Color = "1 1 1 1"
+						}
+					},
+					MINI_QUEST_LIST,
+					"LabelMiniQuestPanel"
+				}
+			};
+
+
+			int i = 0;
+			foreach (PlayerQuest quest in playerQuests.Page(page, 8))
+			{
+				Quest currentQuest = _questList[quest.ParentQuestID];
+				string color = quest.Finished ? "0.1960784 0.7176471 0.4235294 1" : "0.9490197 0.3764706 0.3960785 1";
+				bool isDelivery = currentQuest.QuestType == QuestType.Delivery;
+				container.Add(new CuiElement
+				{
+					Name = "MiniQuestImage",
+					Parent = MINI_QUEST_LIST,
+					Components =
+					{
+						new CuiRawImageComponent { Color = "0 0 0 1", Png = image },
+						new CuiRectTransformComponent { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = $"3.829 {-90.188 - i * size}", OffsetMax = $"299.599 {-23.035 - i * size}" }
+					}
+				});
+				container.Add(new CuiElement
+				{
+					Name = "ImgForMiniQuest",
+					Parent = "MiniQuestImage",
+					Components =
+					{
+						new CuiRawImageComponent { Color = color, Png = imageTwo },
+						new CuiRectTransformComponent { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "0.112 -33.576", OffsetMax = "12.577 33.577" }
+					}
+				});
+				string qtext = isDelivery ? "QUESTS_UI_MiniQLInfoDelivery" : "QUESTS_UI_MiniQLInfo";
+				container.Add(new CuiElement
+				{
+					Name = "LabelForMiniQuest",
+					Parent = "MiniQuestImage",
+					Components =
+					{
+						new CuiTextComponent
+						{
+							Text = qtext.GetAdaptedMessage(player.UserIDString, currentQuest.GetDisplayName(playerLaunguage), quest.Count, currentQuest.ActionCount, currentQuest.GetMissions(playerLaunguage)),
+							Font = "robotocondensed-regular.ttf", FontSize = 12, Align = TextAnchor.MiddleLeft, Color = "1 1 1 1"
+						},
+						new CuiOutlineComponent { Color = "0 0 0 1", Distance = "0.6 0.6" },
+						new CuiRectTransformComponent { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "14.925 -28.867", OffsetMax = "283.625 28.867" }
+					}
+				});
+				i++;
+			}
+
+			#region Page
+
+			int pageCount = (int)Math.Ceiling((double)playerQuests.Count / 8);
+			if (pageCount > 1)
+			{
+				container.Add(new CuiPanel
+				{
+					CursorEnabled = false,
+					Image = { Color = "1 1 1 0" },
+					RectTransform = { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = $"3.829 {-126.593 - (i - 1) * size}", OffsetMax = $"145.353 {-90.187 - (i - 1) * size}" }
+				}, MINI_QUEST_LIST, "Panel_1410");
+				container.Add(new CuiLabel
+				{
+					RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-22.598 -11.514", OffsetMax = "21.517 11.514" },
+					Text = { Text = $"{page + 1}/{pageCount}", Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" }
+				}, "Panel_1410");
+				if (page + 1 < pageCount)
+				{
+					container.Add(new CuiElement
+					{
+						Parent = "Panel_1410",
+						Name = "DOWNBTN",
+						Components =
+						{
+							new CuiRawImageComponent { Png = _imageUI.GetImage("4"), Color = "1 1 1 1" },
+							new CuiRectTransformComponent { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-61.326 -13.326", OffsetMax = "-22.598 13.535" }
+						}
+					});
+
+					container.Add(new CuiButton
+					{
+						RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+						Button = { Color = "0 0 0 0", Command = $"UI_Handler pageQLIST {page + 1}" },
+						Text = { Text = "" }
+					}, "DOWNBTN");
+				}
+
+				if (page > 0)
+				{
+					container.Add(new CuiElement
+					{
+						Parent = "Panel_1410",
+						Name = "UPBTN",
+						Components =
+						{
+							new CuiRawImageComponent { Png = _imageUI.GetImage("3"), Color = "1 1 1 1" },
+							new CuiRectTransformComponent { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "21.517 -13.326", OffsetMax = "60.138 13.743" }
+						}
+					});
+
+					container.Add(new CuiButton
+					{
+						RectTransform = { AnchorMin = "0 0", AnchorMax = "1 1" },
+						Button = { Color = "0 0 0 0", Command = $"UI_Handler pageQLIST {page - 1}" },
+						Text = { Text = "" }
+					}, "UPBTN");
+				}
+			}
+
+			#endregion
+
+			CuiHelper.AddUi(player, container);
+		}
+
+		#endregion
+
+		#region Notice
+
+		private void UINottice(BasePlayer player, string msg, string sprite = "assets/icons/warning.png", string color = "0.76 0.34 0.10 1.00")
+		{
+			CuiElementContainer container = new CuiElementContainer
+			{
+				new CuiElement
+				{
+					FadeOut = 0.30f,
+					Name = "QuestUiNotice",
+					Parent = LAYER_MAIN_BACKGROUND,
+					Components =
+					{
+						new CuiRawImageComponent { Color = "1 1 1 1", Png = _imageUI.GetImage("12"), FadeIn = 0.30f },
+						new CuiRectTransformComponent { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = "315 -110", OffsetMax = "610 -43" }
+					}
+				},
+
+				new CuiElement
+				{
+					FadeOut = 0.30f,
+					Name = "NoticeFeed",
+					Parent = "QuestUiNotice",
+					Components =
+					{
+						new CuiRawImageComponent { Color = color, Png = _imageUI.GetImage("13"), FadeIn = 0.30f },
+						new CuiRectTransformComponent { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "0.276 -33.458", OffsetMax = "12.692 33.459" }
+					}
+				},
+				//container.Add(new CuiElement
+				//{
+				//    Parent = "QuestUi",
+				//    Components = {
+				//        new CuiRawImageComponent { Color = HexToRustFormat(color), Png = GetImage("16"), FadeIn = 0.30f },
+				//        new CuiRectTransformComponent { AnchorMin = "0 0", AnchorMax = "0 0", OffsetMin = "0.451 -23.243", OffsetMax = "1.3422 12.543" }
+				//    }
+				//});
+
+				new CuiElement
+				{
+					FadeOut = 0.30f,
+					Name = "NoticeSprite",
+					Parent = "QuestUiNotice",
+					Components =
+					{
+						new CuiImageComponent { Color = "1 1 1 1", Sprite = sprite, FadeIn = 0.30f },
+						new CuiRectTransformComponent { AnchorMin = "0 0.5", AnchorMax = "0 0.5", OffsetMin = "23.5 -15.5", OffsetMax = "54.5 15.5" }
+					}
+				},
+
+				{
+					new CuiLabel
+					{
+						RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-78.262 -33.458", OffsetMax = "143.522 33.459" },
+						Text = { Text = FormatMessageText(msg), Font = "robotocondensed-regular.ttf", FontSize = 11, Align = TextAnchor.MiddleLeft, Color = "1 1 1 1", FadeIn = 0.30f }
+					},
+					"QuestUiNotice",
+					"NoticeText"
+				}
+			};
+
+			CuiHelper.DestroyUi(player, "NoticeText");
+			CuiHelper.DestroyUi(player, "NoticeSprite");
+			CuiHelper.DestroyUi(player, "NoticeFeed");
+			CuiHelper.DestroyUi(player, "QuestUiNotice");
+			CuiHelper.AddUi(player, container);
+
+			DeleteNotification(player);
+		}
+
+		private readonly Dictionary<BasePlayer, Timer> _playerTimer = new Dictionary<BasePlayer, Timer>();
+
+		private void DeleteNotification(BasePlayer player)
+		{
+			Timer timers = timer.Once(3.5f, () =>
+			{
+				CuiHelper.DestroyUi(player, "NoticeText");
+				CuiHelper.DestroyUi(player, "NoticeSprite");
+				CuiHelper.DestroyUi(player, "NoticeFeed");
+				CuiHelper.DestroyUi(player, "QuestUiNotice");
+			});
+
+			if (_playerTimer.ContainsKey(player))
+			{
+				if (_playerTimer[player] != null && !_playerTimer[player].Destroyed) _playerTimer[player].Destroy();
+				_playerTimer[player] = timers;
+			}
+			else _playerTimer.Add(player, timers);
+		}
+
+		#endregion
+
+		#endregion
+
+		#region Helper Classes
+
+		private static class ObjectCache
+		{
+			private static readonly object True = true;
+			private static readonly object False = false;
+
+			private static class StaticObjectCache<T>
+			{
+				private static readonly Dictionary<T, object> CacheByValue = new Dictionary<T, object>();
+
+				public static object Get(T value)
+				{
+					object cachedObject;
+					if (!CacheByValue.TryGetValue(value, out cachedObject))
+					{
+						cachedObject = value;
+						CacheByValue[value] = cachedObject;
+					}
+
+					return cachedObject;
+				}
+			}
+
+			public static object Get<T>(T value)
+			{
+				return StaticObjectCache<T>.Get(value);
+			}
+
+			public static object Get(bool value)
+			{
+				return value ? True : False;
+			}
+		}
+
+		#endregion
+
+		#region Command
+		
+		private void SendConsoleMessage(BasePlayer player, string message)
+		{
+			if(player != null)
+				player.ConsoleMessage(FormatMessageText(message));
+			else
+				PrintWarning(FormatMessageText(message));
+		}
+		
+		[ConsoleCommand("quests.player.reset")]
+		private void PlayerDataReset(ConsoleSystem.Arg arg)
+		{
+			BasePlayer player = arg.Player();
+			if (player != null && !player.IsAdmin)
+			{
+				player.ConsoleMessage("QUESTS_INSUFFICIENT_PERMISSIONS_ERROR".GetAdaptedMessage(player.UserIDString));
+				return;
+			}
+			
+			if (!arg.HasArgs())
+			{
+				SendConsoleMessage(player, "QUESTS_COMMAND_SYNTAX_ERROR".GetAdaptedMessage(PlayerOrNull(player)));
+				return;
+			}
+
+			ulong playerid;
+			if(!ulong.TryParse(arg.GetString(0), out playerid))
+			{
+				SendConsoleMessage(player, "QUESTS_INVALID_PLAYER_ID_INPUT".GetAdaptedMessage(PlayerOrNull(player)));
+				return;
+			}
+
+			if (!playerid.IsSteamId())
+			{
+				SendConsoleMessage(player, "QUESTS_NOT_A_STEAM_ID".GetAdaptedMessage(PlayerOrNull(player)));
+				return;
+			}
+			
+			if (_playersInfo.ContainsKey(playerid))
+			{
+				_playersInfo[playerid] = new PlayerData();
+				SendConsoleMessage(player, "QUESTS_PLAYER_PROGRESS_RESET".GetAdaptedMessage(PlayerOrNull(player)));
+			}
+			else
+			{
+				SendConsoleMessage(player, "QUESTS_PLAYER_NOT_FOUND_BY_STEAMID".GetAdaptedMessage(PlayerOrNull(player)));
+			}
+		}
+		
+
+		private static string PlayerOrNull(BasePlayer player) => player != null ? player.UserIDString : null;
+
+		[ConsoleCommand("CloseMiniQuestList")]
+		void CloseMiniQuestList(ConsoleSystem.Arg arg)
+		{
+			CuiHelper.DestroyUi(arg.Player(), MINI_QUEST_LIST);
+			if (_openMiniQuestListPlayers.Contains(arg.Player().userID))
+			{
+				_openMiniQuestListPlayers.Remove(arg.Player().userID);
+			}
+		}
+
+		[ConsoleCommand("CloseMainUI")]
+		void CloseLayerPlayer(ConsoleSystem.Arg arg)
+		{
+			CuiHelper.DestroyUi(arg.Player(), LAYERS);
+		}
+
+		
+
+
+		[ConsoleCommand("UI_Handler")]
+		private void CmdConsoleHandler(ConsoleSystem.Arg args)
+		{
+			BasePlayer player = args.Player();
+			List<PlayerQuest> playerQuests = _playersInfo[player.userID].CurrentPlayerQuests;
+			if (playerQuests == null)
+			{
+				return;
+			}
+
+			if (player != null && args.HasArgs())
+			{
+				switch (args.Args[0])
+				{
+					case "get":
+					{
+						UICategory category;
+						int pageIndex;
+						if (args.HasArgs(4) && long.TryParse(args.Args[1],  out long questID) && Enum.TryParse(args.Args[2], out category) && int.TryParse(args.Args[3], out pageIndex))
+						{
+							Quest currentQuest = _questList[questID];
+							if (currentQuest != null)
+							{
+								if (playerQuests.Count >= _config.settings.questCount)
+								{
+									UINottice(player, "QUESTS_UI_QuestLimit".GetAdaptedMessage(player.UserIDString));
+									return;
+								}
+
+								if (playerQuests.Exists(p => p.ParentQuestID == currentQuest.QuestID))
+								{
+									UINottice(player, "QUESTS_UI_AlreadyTaken".GetAdaptedMessage(player.UserIDString));
+									return;
+								}
+
+								if (!string.IsNullOrEmpty(currentQuest.QuestPermission) && !permission.UserHasPermission(player.UserIDString, $"{Name}." + currentQuest.QuestPermission))
+								{
+									UINottice(player, "QUESTS_UI_NotPerm".GetAdaptedMessage(player.UserIDString));
+									return;
+								}
+
+								if (!currentQuest.IsRepeatable && _playersInfo[player.userID].CompletedQuestIds.Contains(currentQuest.QuestID))
+								{
+									UINottice(player, "QUESTS_UI_AlreadyDone".GetAdaptedMessage(player.UserIDString));
+									return;
+								}
+
+								if (_playersInfo[player.userID].CompletedQuestIds.Contains(currentQuest.QuestID))
+								{
+									UINottice(player, "QUESTS_UI_AlreadyDone".GetAdaptedMessage(player.UserIDString));
+									return;
+								}
+
+								playerQuests.Add(new PlayerQuest() { UserID = player.userID, ParentQuestID = currentQuest.QuestID, ParentQuestType = currentQuest.QuestType });
+								_questStatistics.GatherTaskStatistics(TaskType.Taken);
+
+								QuestListUI(player, category, pageIndex);
+								QuestInfo(player, questID, category, pageIndex);
+								UINottice(player, "QUESTS_UI_TookTasks".GetAdaptedMessage(player.UserIDString, currentQuest.GetDisplayName(lang.GetLanguage(player.UserIDString))));
+							}
+						}
+
+						break;
+					}
+					case "page":
+					{
+						int pageIndex;
+						UICategory category;
+						if (int.TryParse(args.Args[1], out pageIndex) && Enum.TryParse(args.Args[2], out category))
+						{
+							QuestListUI(player, category, pageIndex);
+						}
+
+						break;
+					}
+					case "category":
+					{
+						UICategory category;
+						bool isParsed = Enum.TryParse(args.Args[1], out category);
+						if (isParsed)
+						{
+							Category(player, category);
+							QuestListUI(player, category);
+						}
+
+						break;
+					}
+					case "pageQLIST":
+					{
+						int pageIndex;
+						if (int.TryParse(args.Args[1], out pageIndex))
+						{
+							UIMiniQuestList(player, pageIndex);
+						}
+
+						break;
+					}
+					case "coldown":
+					{
+						UINottice(player, "QUESTS_UI_ACTIVECOLDOWN".GetAdaptedMessage(player.UserIDString));
+						break;
+					}
+					case "questinfo":
+					{
+						long questIndex;
+						UICategory category;
+						int pageIndex;
+						if (long.TryParse(args.Args[1], out questIndex) && Enum.TryParse(args.Args[2], out category) && int.TryParse(args.Args[3], out pageIndex))
+						{
+							QuestInfo(player, questIndex, category, pageIndex);
+						}
+
+						break;
+					}
+					case "finish":
+					{
+						long questID;
+						UICategory category;
+						int pageIndex;
+						bool cancel = false;
+						if (args.HasArgs(5))
+						{
+							bool parsed = bool.TryParse(args.Args[4], out bool tmp);
+							cancel = parsed && tmp;
+						}
+						if (args.HasArgs(4) && long.TryParse(args.Args[1], out questID) && Enum.TryParse(args.Args[2], out category) && int.TryParse(args.Args[3], out pageIndex))
+						{
+							Quest globalQuest = _questList[questID];
+							if (globalQuest != null)
+							{
+								PlayerQuest currentQuest = playerQuests.Find(quest => quest.ParentQuestID == globalQuest.QuestID);
+								if (currentQuest == null)
+								{
+									return;
+								}
+
+								if (currentQuest.Finished || (currentQuest.ParentQuestType == QuestType.Delivery && !cancel))
+								{
+									int count = 0;
+									foreach (Quest.Prize prize in globalQuest.PrizeList)
+										if (prize.PrizeType != PrizeType.Command)
+											count++;
+
+									if (24 - player.inventory.containerMain.itemList.Count < count)
+									{
+										UINottice(player, "QUESTS_UI_LackOfSpace".GetAdaptedMessage(player.UserIDString));
+										return;
+									}
+
+									if (globalQuest.IsReturnItemsRequired)
+									{
+										ulong skins;
+										if (globalQuest.QuestType is QuestType.Loot or QuestType.Delivery && ulong.TryParse(globalQuest.Target, out skins))
+										{
+											if (!TakeSkinIdItemsForQuest(player, globalQuest, skins))
+												return;
+										}
+										else if (globalQuest.QuestType is QuestType.Gather or QuestType.Loot or QuestType.Craft or QuestType.PurchaseFromNpc or QuestType.Growseedlings or QuestType.Fishing or QuestType.Delivery)
+										{
+											if (!TakeItemsNeededForQuest(player, globalQuest))
+												return;
+										}
+									}
+
+									UINottice(player, "QUESTS_UI_QuestsCompleted".GetAdaptedMessage(player.UserIDString));
+
+									currentQuest.Finished = false;
+									GiveQuestReward(player, globalQuest.PrizeList);
+									if (!globalQuest.IsRepeatable)
+									{
+										_playersInfo[player.userID].CompletedQuestIds.Add(currentQuest.ParentQuestID);
+									}
+									else if (globalQuest.Cooldown > 0)
+									{
+										_playersInfo[player.userID].PlayerQuestCooldowns[currentQuest.ParentQuestID] = CurrentTime() + globalQuest.Cooldown;
+									}
+
+									playerQuests.Remove(currentQuest);
+									QuestListUI(player, category, pageIndex);
+									QuestInfo(player, questID, category, pageIndex);
+
+									if (currentQuest.ParentQuestType == QuestType.Delivery)
+									{
+										if (Instance._config.settings.sandNotifyAllPlayer)
+										{
+											foreach (BasePlayer players in BasePlayer.activePlayerList)
+											{
+												Instance.SendChat(players, "QUESTS_Finished_QUEST_ALL".GetAdaptedMessage( players.UserIDString, player.displayName,
+													globalQuest.GetDisplayName(Instance.lang.GetLanguage(player.UserIDString))));
+											}
+										}
+
+										Interface.CallHook("OnQuestCompleted", player, globalQuest.GetDisplayName(Instance.lang.GetLanguage(player.UserIDString)));
+										Instance._questStatistics.GatherTaskStatistics(TaskType.TaskExecution, globalQuest.QuestID);
+										Instance._questStatistics.GatherTaskStatistics(TaskType.Completed);
+									}
+								}
+								else
+								{
+									UINottice(player, "QUESTS_UI_PassedTasks".GetAdaptedMessage(player.UserIDString));
+									playerQuests.Remove(currentQuest);
+									QuestListUI(player, category, pageIndex);
+									QuestInfo(player, questID, category, pageIndex);
+									_questStatistics.GatherTaskStatistics(TaskType.Declined);
+								}
+							}
+							else
+							{
+								UINottice(player, " <color=#4286f4> </color>  !");
+							}
+						}
+
+						break;
+					}
+				}
+			}
+		}
+
+		#endregion
+
+		#region HelpQuestsMetods
+
+		#region Rewards and bring items
+
+		private void GiveQuestReward(BasePlayer player, List<Quest.Prize> prizeList)
+		{
+			foreach (Quest.Prize check in prizeList)
+			{
+				switch (check.PrizeType)
+				{
+					case PrizeType.Item:
+						Item newItem = ItemManager.CreateByPartialName(check.ItemShortName, check.ItemAmount);
+						player.GiveItem(newItem, BaseEntity.GiveItemReason.Crafted);
+						break;
+					case PrizeType.Command:
+						Server.Command(check.PrizeCommand.Replace("%STEAMID%", player.UserIDString));
+						break;
+					case PrizeType.CustomItem:
+						Item customItem = ItemManager.CreateByPartialName(check.ItemShortName, check.ItemAmount, check.ItemSkinID);
+						customItem.name = check.CustomItemName;
+						player.GiveItem(customItem, BaseEntity.GiveItemReason.Crafted);
+						break;
+					case PrizeType.BluePrint:
+						Item itemBp = ItemManager.Create(ItemManager.blueprintBaseDef);
+						ItemDefinition targetItem = ItemManager.FindItemDefinition(check.ItemShortName);
+						if (targetItem == null) continue;
+						itemBp.blueprintTarget = targetItem.isRedirectOf != null ? targetItem.isRedirectOf.itemid : targetItem.itemid;
+						player.GiveItem(itemBp, BaseEntity.GiveItemReason.Crafted);
+						break;
+					default:
+						throw new ArgumentOutOfRangeException();
+				}
+			}
+		}
+
+		private bool TakeItemsNeededForQuest(BasePlayer player, Quest globalQuest)
+		{
+			ItemDefinition idItem = ItemManager.FindItemDefinition(globalQuest.Target);
+			int? item = null;
+			if (player != null && player.inventory != null)
+				item = player.inventory.GetAmount(idItem.itemid);
+			
+			if (item is 0 or null)
+			{
+				UINottice(player, "QUESTS_UI_InsufficientResources".GetAdaptedMessage(player.UserIDString, idItem.displayName.english));
+				return false;
+			}
+
+			if (item < globalQuest.ActionCount)
+			{
+				UINottice(player, "QUESTS_UI_NotResourcesAmount".GetAdaptedMessage(player.UserIDString, idItem.displayName.english, globalQuest.ActionCount));
+				return false;
+			}
+
+			if (item >= globalQuest.ActionCount)
+			{
+				player.inventory.Take(null, idItem.itemid, globalQuest.ActionCount);
+			}
+
+			return true;
+		}
+
+		private bool TakeSkinIdItemsForQuest(BasePlayer player, Quest globalQuest, ulong skins)
+		{
+			List<Item> acceptedItems = Pool.Get<List<Item>>();
+			int itemAmount = 0;
+			int amountQuest = globalQuest.ActionCount;
+			string itemName = string.Empty;
+			List<Item> items = Pool.Get<List<Item>>();
+			player.inventory.GetAllItems(items);
+			foreach (Item item in items)
+			{
+				if (item.skin == skins)
+				{
+					acceptedItems.Add(item);
+					itemAmount += item.amount;
+					itemName = item.GetName();
+				}
+			}
+			Pool.Free(ref items);
+			if (acceptedItems.Count == 0)
+			{
+				UINottice(player, "QUESTS_UI_InsufficientResourcesSkin".GetAdaptedMessage(player.UserIDString));
+				return false;
+			}
+
+			if (itemAmount < amountQuest)
+			{
+				UINottice(player, "QUESTS_UI_NotResourcesAmount".GetAdaptedMessage(player.UserIDString, itemName, amountQuest));
+				return false;
+			}
+
+			foreach (Item use in acceptedItems)
+			{
+				if (use.amount >= amountQuest)
+				{
+					use.amount -= amountQuest;
+					if (use.amount == 0)
+					{
+						use.RemoveFromContainer();
+						use.Remove();
+					}
+
+					amountQuest = 0;
+				}
+				else
+				{
+					amountQuest -= use.amount;
+					use.RemoveFromContainer();
+					use.Remove();
+				}
+
+				if (amountQuest == 0)
+				{
+					break;
+				}
+			}
+			
+			Pool.Free(ref acceptedItems);
+			player.inventory.SendSnapshot();
+			return true;
+		}
+
+		#endregion
+
+		#region QuestProgress
+
+		private void QuestProgress(ulong playerUserID, QuestType questType, string entName = "", string skinId = "", List<Item> items = null, int count = 1)
+		{
+			if (!_playersInfo.TryGetValue(playerUserID, out PlayerData playerData))
+				return;
+
+			List<PlayerQuest> playerQuests = playerData.CurrentPlayerQuests.FindAll(x => x.ParentQuestType == questType && !x.Finished);
+
+			foreach (PlayerQuest quest in playerQuests)
+			{
+				Quest parentQuest = _questList[quest.ParentQuestID];
+				if (string.IsNullOrEmpty(entName) && items == null)
+				{
+					quest.AddCount(count);
+					return;
+				}
+				
+				if (items != null)
+				{
+					bool isSkinID = ulong.TryParse(parentQuest.Target, out ulong skinIditem);
+					foreach (Item item in items)
+					{
+						if(item.info.shortname.Equals(parentQuest.Target, StringComparison.OrdinalIgnoreCase) || (isSkinID && item.skin.Equals(skinIditem)))
+							quest.AddCount(item.amount);
+					}
+					continue;
+				}
+				
+				switch (questType)
+				{
+					case QuestType.IQCases:
+					case QuestType.HarborEvent:
+					case QuestType.SatelliteDishEvent:
+					case QuestType.Sputnik:
+					case QuestType.Caravan:
+					case QuestType.Convoy:
+					case QuestType.GasStationEvent:
+					case QuestType.FerryTerminalEvent:
+					case QuestType.Triangulation:
+					case QuestType.AbandonedBases:
+					case QuestType.IQDronePatrol:
+					case QuestType.IQDefenderSupply:
+					case QuestType.IQHeadReward:
+					{
+						if (parentQuest.Target.Equals(entName) || parentQuest.Target.Equals("0") || parentQuest.Target.Equals("999"))
+							quest.AddCount(count);
+						break;
+					}
+					case QuestType.Swipe:
+					{
+						if (parentQuest.Target.Equals(entName))
+							quest.AddCount(count);
+						break;
+					}
+					case QuestType.EntityKill:
+					{
+						if (parentQuest.IsMoreTarget)
+						{
+							foreach (string target in parentQuest.Targets)
+							{
+								if (entName.Equals(target, StringComparison.OrdinalIgnoreCase))
+									quest.AddCount(count);
+							}
+						}
+						else
+						{
+							if (entName.Equals(parentQuest.Target, StringComparison.OrdinalIgnoreCase))
+								quest.AddCount(count);
+						}
+						break;
+					}
+					default:
+					{
+						if (entName.Equals(parentQuest.Target, StringComparison.OrdinalIgnoreCase) || skinId.Equals(parentQuest.Target))
+							quest.AddCount(count);
+						break;
+					}
+				}
+			}
+			
+			Interface.CallHook("OnQuestProgress", playerUserID, (int)questType, entName, skinId, items, count);
+		}
+
+		#endregion
+
+		#endregion
+
+		#region ImageLoader
+
+		private class ImageUI
+		{
+			private readonly string _paths;
+			private readonly string _printPath;
+			private readonly Dictionary<string, ImageData> _images;
+			private bool _missingImagesNotified;
+
+			private enum ImageStatus
+			{
+				NotLoaded,
+				Loaded,
+				Failed
+			}
+
+			public ImageUI()
+			{
+				_paths = Instance.Name + "/Images/";
+				_printPath = "data/" + _paths;
+				_images = new Dictionary<string, ImageData>
+				{
+					{ "1", new ImageData() },
+					{ "2", new ImageData() },
+					{ "3", new ImageData() },
+					{ "4", new ImageData() },
+					{ "5", new ImageData() },
+					{ "6", new ImageData() },
+					{ "7", new ImageData() },
+					{ "8", new ImageData() },
+					{ "9", new ImageData() },
+					{ "10", new ImageData() },
+					{ "11", new ImageData() },
+					{ "12", new ImageData() },
+					{ "13", new ImageData() },
+					{ "14", new ImageData() },
+					{ "15", new ImageData() },
+					{ "16", new ImageData() }
+				};
+			}
+
+			private class ImageData
+			{
+				public ImageStatus Status = ImageStatus.NotLoaded;
+				public string Id { get; set; }
+			}
+
+			public string GetImage(string name)
+			{
+				ImageData image;
+				if (_images.TryGetValue(name, out image) && image.Status == ImageStatus.Loaded)
+					return image.Id;
+				return null;
+			}
+
+			public void DownloadImage()
+			{
+				KeyValuePair<string, ImageData>? image = null;
+				foreach (KeyValuePair<string, ImageData> img in _images)
+				{
+					if (img.Value.Status == ImageStatus.NotLoaded)
+					{
+						image = img;
+						break;
+					}
+				}
+
+				if (image != null)
+				{
+					ServerMgr.Instance.StartCoroutine(ProcessDownloadImage(image.Value));
+				}
+				else
+				{
+					List<string> failedImages = new List<string>();
+
+					foreach (KeyValuePair<string, ImageData> img in _images)
+					{
+						if (img.Value.Status == ImageStatus.Failed)
+						{
+							failedImages.Add(img.Key);
+						}
+					}
+
+					if (failedImages.Count > 0)
+					{
+						if (!_missingImagesNotified)
+						{
+							_missingImagesNotified = true;
+							string images = string.Join(", ", failedImages);
+							Instance.Puts($"Optional image files are missing ({images}). UI icons will use defaults until files are added to '{_printPath}'.");
+						}
+					}
+					else
+					{
+						Instance.Puts($"{_images.Count} images downloaded successfully!");
+					}
+				}
+			}
+
+			public void UnloadImages()
+			{
+				foreach (KeyValuePair<string, ImageData> item in _images)
+					if (item.Value.Status == ImageStatus.Loaded)
+						if (item.Value?.Id != null)
+							FileStorage.server.Remove(uint.Parse(item.Value.Id), FileStorage.Type.png, CommunityEntity.ServerInstance.net.ID);
+
+				_images?.Clear();
+			}
+
+			private IEnumerator ProcessDownloadImage(KeyValuePair<string, ImageData> image)
+			{
+				string url = "file://" + Interface.Oxide.DataDirectory + "/" + _paths + image.Key + ".png";
+
+				using UnityWebRequest www = UnityWebRequestTexture.GetTexture(url);
+				yield return www.SendWebRequest();
+
+				if (www.result is UnityWebRequest.Result.ConnectionError or UnityWebRequest.Result.ProtocolError)
+				{
+					image.Value.Status = ImageStatus.Failed;
+				}
+				else
+				{
+					Texture2D tex = DownloadHandlerTexture.GetContent(www);
+					image.Value.Id = FileStorage.server.Store(tex.EncodeToPNG(), FileStorage.Type.png, CommunityEntity.ServerInstance.net.ID).ToString();
+					image.Value.Status = ImageStatus.Loaded;
+					UnityEngine.Object.DestroyImmediate(tex);
+				}
+
+				DownloadImage();
+			}
+		}
+
+		#endregion
+
+	}
+}
+
+namespace Oxide.Plugins.QuestsExtensionMethods
+{
+	public static class ExtensionMethods
+	{
+		private static readonly Lang Lang = Interface.Oxide.GetLibrary<Lang>();
+
+		#region GetLang
+		
+		public static string GetAdaptedMessage(this string langKey, in string userID, params object[] args)
+		{
+			string message = Lang.GetMessage(langKey, Quests.Instance, userID);
+			
+			StringBuilder stringBuilder = Pool.Get<StringBuilder>();
+		
+			try
+			{
+				return stringBuilder.AppendFormat(message, args).ToString();
+			}
+			finally
+			{
+				stringBuilder.Clear();
+				Pool.FreeUnmanaged(ref stringBuilder);
+			}
+		}
+		
+		public static string GetAdaptedMessage(this string langKey, in string userID = null)
+		{
+			return Lang.GetMessage(langKey, Quests.Instance, userID);
+		}
+		
+		#endregion
+		
+		#region Pagination
+
+		public static IEnumerable<T> Page<T>(this List<T> source, int page, int pageSize)
+		{
+			int start = page * pageSize;
+			int end = start + pageSize;
+			for (int i = start; i < end && i < source.Count; i++)
+			{
+				yield return source[i];
+			}
+		}
+
+		#endregion
+	}
 }
