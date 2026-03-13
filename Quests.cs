@@ -1,4 +1,4 @@
-﻿﻿using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Oxide.Core;
 using Oxide.Core.Plugins;
 using Oxide.Game.Rust.Cui;
@@ -333,38 +333,38 @@ namespace Oxide.Plugins
 
 		private enum QuestType
 		{
-			IQPlagueSkill,
-			IQHeadReward,
-			IQCases,
-			OreBonus,
-			XDChinookIvent,
-			Gather,
-			EntityKill,
-			Craft,
-			Research,
-			Loot,
-			Grade,
-			Swipe,
-			Deploy,
-			PurchaseFromNpc,
-			HackCrate,
-			RecycleItem,
-			Growseedlings,
-			RaidableBases,
-			Fishing,
-			BossMonster,
-			HarborEvent,
-			SatelliteDishEvent,
-			Sputnik,
-			AbandonedBases,
-			Delivery,
-			IQDronePatrol,
-			GasStationEvent,
-			Triangulation,
-			FerryTerminalEvent,
-			Convoy,
-			Caravan,
-			IQDefenderSupply
+			IQPlagueSkill = 0,      // Learn or upgrade plague skills
+			IQHeadReward = 1,       // Complete head-reward style objectives
+			IQCases = 2,            // Open custom cases
+			OreBonus = 3,           // Trigger ore-bonus style objectives
+			XDChinookIvent = 4,     // Complete XD Chinook event objectives
+			Gather = 5,             // Collect resources/items
+			EntityKill = 6,         // Kill animals/NPCs/players or destroy entities like barrels
+			Craft = 7,              // Craft items
+			Research = 8,           // Research items
+			Loot = 9,               // Loot containers/entities
+			Grade = 10,             // Upgrade building blocks
+			Swipe = 11,             // Swipe keycards/readers
+			Deploy = 12,            // Deploy entities/items
+			PurchaseFromNpc = 13,   // Buy items from NPC vending machines
+			HackCrate = 14,         // Hack locked crates
+			RecycleItem = 15,       // Recycle items
+			Growseedlings = 16,     // Grow seedlings/plants
+			RaidableBases = 17,     // Complete raidable base objectives
+			Fishing = 18,           // Catch fish
+			BossMonster = 19,       // Kill boss monsters
+			HarborEvent = 20,       // Complete harbor event objectives
+			SatelliteDishEvent = 21,// Complete satellite dish event objectives
+			Sputnik = 22,           // Complete Sputnik event objectives
+			AbandonedBases = 23,    // Complete abandoned base objectives
+			Delivery = 24,          // Deliver required items
+			IQDronePatrol = 25,     // Complete IQ drone patrol objectives
+			GasStationEvent = 26,   // Complete gas station event objectives
+			Triangulation = 27,     // Complete triangulation objectives
+			FerryTerminalEvent = 28,// Complete ferry terminal event objectives
+			Convoy = 29,            // Complete convoy event objectives
+			Caravan = 30,           // Complete caravan event objectives
+			IQDefenderSupply = 31   // Complete IQ defender supply objectives
 		}
 
 		private enum PrizeType
@@ -408,9 +408,7 @@ namespace Oxide.Plugins
 			public int Cooldown;
 			
 			[JsonIgnore]
-			public bool IsMoreTarget = false;
-			[JsonIgnore]
-			public string[] Targets;
+			public string[] Targets = Array.Empty<string>();
 			public List<Prize> PrizeList = new List<Prize>();
 
 			public string GetDisplayName(string language) => language == "ru" || IsMultiLanguage == false ? QuestDisplayName : QuestDisplayNameMultiLanguage;
@@ -709,38 +707,28 @@ namespace Oxide.Plugins
 			}
 		}
 		
-		private static List<string> excludedNames = new()
+		private static readonly HashSet<string> ExcludedEntityDeathTargets = new(StringComparer.OrdinalIgnoreCase)
 		{
 			"corpse", "servergibs", "player", "rug.bear.deployed"
 		};
-		
+
 		private void OnEntityDeath(BaseCombatEntity entity, HitInfo info)
 		{
-			try
-			{ 
-				if (entity == null || info == null)
-					return;
+			if (entity == null || info == null || entity.GetComponent<PatrolHelicopter>() != null)
+				return;
 
-				string targetName = entity.ShortPrefabName;
-				
-				if (excludedNames.Contains(targetName))
-					return;
+			BasePlayer player = info.InitiatorPlayer;
+			if (player == null || player.IsNpc || entity.ToPlayer() == player)
+				return;
 
-				if (targetName == "testridablehorse")
-					targetName = "horse";
+			string name = entity.ShortPrefabName.ToLowerInvariant();
+			if (ExcludedEntityDeathTargets.Contains(name))
+				return;
 
-				BasePlayer player = info.InitiatorPlayer;
+			if (name == "testridablehorse")
+				name = "horse";
 
-				if (entity.GetComponent<PatrolHelicopter>() != null)
-					return;
-        
-				if (player != null && !player.IsNpc && entity.ToPlayer() != player)
-					QuestProgress(player.userID, QuestType.EntityKill, targetName.ToLower());
-			}
-			catch (Exception ex)
-			{
-				Debug.LogError($"    : {ex.Message}");
-			}
+			QuestProgress(player.userID, QuestType.EntityKill, name);
 		}
 
 
@@ -1344,6 +1332,14 @@ namespace Oxide.Plugins
 					continue;
 				}
 
+				quest.Targets = (quest.Target ?? string.Empty)
+					.Split(',')
+					.Select(x => x.Trim().ToLowerInvariant())
+					.Where(x => !string.IsNullOrEmpty(x))
+					.ToArray();
+				if (quest.Targets.Length == 1)
+					quest.Target = quest.Targets[0];
+
 				_questList[quest.QuestID] = quest;
 				if (!string.IsNullOrEmpty(quest.QuestPermission))
 					permission.RegisterPermission($"{Name}.{quest.QuestPermission}", this);
@@ -1449,15 +1445,6 @@ namespace Oxide.Plugins
 			return Facepunch.Math.Epoch.Current;
 		}
 
-		private Vector3 GetResultVector()
-		{
-			return Vector3.zero;
-		}
-
-		private float GetResultRotation()
-		{
-			return 0f;
-		}
 
 		private float DegreeToRadian(float angle)
 		{
@@ -3101,19 +3088,9 @@ namespace Oxide.Plugins
 					}
 					case QuestType.EntityKill:
 					{
-						if (parentQuest.IsMoreTarget)
-						{
-							foreach (string target in parentQuest.Targets)
-							{
-								if (entName.Equals(target, StringComparison.OrdinalIgnoreCase))
-									quest.AddCount(count);
-							}
-						}
-						else
-						{
-							if (entName.Equals(parentQuest.Target, StringComparison.OrdinalIgnoreCase))
-								quest.AddCount(count);
-						}
+						string normalizedEntityName = entName.ToLowerInvariant();
+						if (parentQuest.Targets.Contains(normalizedEntityName) || normalizedEntityName.Equals(parentQuest.Target, StringComparison.OrdinalIgnoreCase))
+							quest.AddCount(count);
 						break;
 					}
 					default:
