@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+﻿﻿using Newtonsoft.Json;
 using Oxide.Core;
 using Oxide.Core.Plugins;
 using Oxide.Game.Rust.Cui;
@@ -1528,7 +1528,7 @@ namespace Oxide.Plugins
 						Text =
 						{
 							Text = "QUESTS_UI_TASKLIST".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleLeft,
-							Color = "0.7169812 0.7169812 0.7169812 1"
+							Color = "0 0 0 1"
 						}
 					},
 					LAYER_MAIN_BACKGROUND,
@@ -1541,7 +1541,7 @@ namespace Oxide.Plugins
 						RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-269.184 -102.227", OffsetMax = "-197.242 -72.373" },
 						Text =
 						{
-							Text = "QUESTS_UI_Awards".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1"
+							Text = "QUESTS_UI_Awards".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0 0 0 1"
 						}
 					},
 					LAYER_MAIN_BACKGROUND,
@@ -1555,7 +1555,7 @@ namespace Oxide.Plugins
 						Text =
 						{
 							Text = "QUESTS_UI_TASKCount".GetAdaptedMessage(player.UserIDString, 0), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleRight,
-							Color = "1 1 1 1"
+							Color = "0 0 0 1"
 						}
 					},
 					LAYER_MAIN_BACKGROUND,
@@ -1581,7 +1581,7 @@ namespace Oxide.Plugins
 						Text =
 						{
 							Text = "QUESTS_UI_TASKCount".GetAdaptedMessage(player.UserIDString, count), Font = "robotocondensed-regular.ttf", FontSize = 14,
-							Align = TextAnchor.MiddleRight, Color = "1 1 1 1"
+							Align = TextAnchor.MiddleRight, Color = "0 0 0 1"
 						}
 					},
 					LAYER_MAIN_BACKGROUND,
@@ -1686,7 +1686,7 @@ namespace Oxide.Plugins
 				Text =
 				{
 					Text = "QUESTS_UI_CATEGORY".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-bold.ttf", FontSize = 12, Align = TextAnchor.MiddleLeft,
-					Color = "0.7169812 0.7169812 0.7169812 1"
+					Color = "0 0 0 1"
 				}
 			}, QUESTS_CATEGORY_MAIN, "QUESTS_CATEGORY_TITLE");
 
@@ -1815,7 +1815,7 @@ namespace Oxide.Plugins
 					Text =
 					{
 						Text = "QUESTS_UI_TASKS_LIST_EMPTY".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-bold.ttf", FontSize = 15, Align = TextAnchor.MiddleCenter,
-						Color = "1 1 1 1"
+						Color = "0 0 0 1"
 					}
 				}, "QuestListPanel");
 			}
@@ -1838,7 +1838,7 @@ namespace Oxide.Plugins
 					RectTransform = { AnchorMin = "0.5 1", AnchorMax = "0.5 1", OffsetMin = "-109.661 -33", OffsetMax = "113.14 -12.085" },
 					Text =
 					{
-						Text = item.GetDisplayName(lang.GetLanguage(player.UserIDString)), Font = "robotocondensed-bold.ttf", FontSize = 13, Align = TextAnchor.MiddleLeft, Color = "1 1 1 1"
+						Text = item.GetDisplayName(lang.GetLanguage(player.UserIDString)), Font = "robotocondensed-bold.ttf", FontSize = 13, Align = TextAnchor.MiddleLeft, Color = "0 0 0 1"
 					}
 				}, "Quest", "QuestName");
 				if (category == UICategory.Taken)
@@ -1871,7 +1871,7 @@ namespace Oxide.Plugins
 						container.Add(new CuiLabel
 						{
 							RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-34.924 -7.153", OffsetMax = "40.356 7.153" },
-							Text = { Text = txt, Font = "robotocondensed-bold.ttf", FontSize = 10, Align = TextAnchor.UpperCenter, Color = "1 1 1 1" }
+							Text = { Text = txt, Font = "robotocondensed-bold.ttf", FontSize = 10, Align = TextAnchor.UpperCenter, Color = "0 0 0 1" }
 						}, "QuestBar", "BarLabel");
 					}
 				}
@@ -1926,7 +1926,7 @@ namespace Oxide.Plugins
 					Text =
 					{
 						Text = "QUESTS_UI_TASKS_INFO_EMPTY".GetAdaptedMessage(player.UserIDString), Font = "robotocondensed-regular.ttf", FontSize = 19, Align = TextAnchor.MiddleCenter,
-						Color = "1 1 1 1"
+						Color = "0 0 0 1"
 					}
 				}, "QuestInfoPanel");
 
@@ -1938,7 +1938,7 @@ namespace Oxide.Plugins
 			container.Add(new CuiLabel
 			{
 				RectTransform = { AnchorMin = "0 1", AnchorMax = "0 1", OffsetMin = "23.704 -42.956", OffsetMax = "420.496 -16.044" },
-				Text = { Text = quests.GetDisplayName(playerLaunguage), Font = "robotocondensed-bold.ttf", FontSize = 19, Align = TextAnchor.MiddleLeft, Color = "1 1 1 1" }
+				Text = { Text = quests.GetDisplayName(playerLaunguage), Font = "robotocondensed-bold.ttf", FontSize = 19, Align = TextAnchor.MiddleLeft, Color = "0 0 0 1" }
 			}, "QuestInfoPanel", "QuestName");
 
 			string userepeat = quests.IsRepeatable ? "QUESTS_UI_QUESTREPEATCAN".GetAdaptedMessage(player.UserIDString) : "QUESTS_UI_QUESTREPEATfForbidden".GetAdaptedMessage(player.UserIDString);
@@ -1952,14 +1952,14 @@ namespace Oxide.Plugins
 				Text =
 				{
 					Text = "QUESTS_UI_InfoRepeatInCD".GetAdaptedMessage(player.UserIDString, userepeat, useCooldown, bring), Font = "robotocondensed-regular.ttf", FontSize = 10,
-					Align = TextAnchor.UpperLeft, Color = "0.9607844 0.5843138 0.1960784 1"
+					Align = TextAnchor.UpperLeft, Color = "0 0 0 1"
 				}
 			}, "QuestInfoPanel", "QuestInfo2");
 
 			container.Add(new CuiLabel
 			{
 				RectTransform = { AnchorMin = "0.5 1", AnchorMax = "0.5 1", OffsetMin = "-398.895 -289.293", OffsetMax = "106.815 -76.2" },
-				Text = { Text = quests.GetDescription(playerLaunguage), Font = "robotocondensed-regular.ttf", FontSize = 16, Align = TextAnchor.UpperLeft, Color = "1 1 1 1" }
+				Text = { Text = quests.GetDescription(playerLaunguage), Font = "robotocondensed-regular.ttf", FontSize = 16, Align = TextAnchor.UpperLeft, Color = "0 0 0 1" }
 			}, "QuestInfoPanel", "QuestDescription");
 
 			#region QuestButton
@@ -2119,7 +2119,7 @@ namespace Oxide.Plugins
 			container.Add(new CuiLabel
 			{
 				RectTransform = { AnchorMin = "0.5 1", AnchorMax = "0.5 1", OffsetMin = "-91.326 -55.693", OffsetMax = "136.647 -16.904" },
-				Text = { Text = quests.GetMissions(playerLaunguage), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.UpperLeft, Color = "1 1 1 1" }
+				Text = { Text = quests.GetMissions(playerLaunguage), Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.UpperLeft, Color = "0 0 0 1" }
 			}, "QuestCheckBox", "CheckBoxTxt");
 
 			if (foundQuest != null && foundQuest.ParentQuestType != QuestType.Delivery)
@@ -2140,7 +2140,7 @@ namespace Oxide.Plugins
 				container.Add(new CuiLabel
 				{
 					RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-139.005 -20.129", OffsetMax = "139.005 20.13" },
-					Text = { Text = $"{foundQuest.Count} / {quests.ActionCount}", Font = "robotocondensed-bold.ttf", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" }
+					Text = { Text = $"{foundQuest.Count} / {quests.ActionCount}", Font = "robotocondensed-bold.ttf", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "0 0 0 1" }
 				}, "QuestProgresBar", "Progres");
 			}
 
@@ -2237,7 +2237,7 @@ namespace Oxide.Plugins
 				container.Add(new CuiLabel
 				{
 					RectTransform = { AnchorMin = "1 0", AnchorMax = "1 0", OffsetMin = "-61.669 0.67", OffsetMax = "-5.931 17.33" },
-					Text = { Text = $"x{prize.ItemAmount}", Font = "robotocondensed-regular.ttf", FontSize = 11, Align = TextAnchor.MiddleRight, Color = "1 1 1 1" }
+					Text = { Text = $"x{prize.ItemAmount}", Font = "robotocondensed-regular.ttf", FontSize = 11, Align = TextAnchor.MiddleRight, Color = "0 0 0 1" }
 				}, prizeLayer);
 				
 				if (y == 2)
@@ -2363,7 +2363,7 @@ namespace Oxide.Plugins
 						Text =
 						{
 							Text = "QUESTS_UI_ACTIVEOBJECTIVES".GetAdaptedMessage(player.UserIDString, playerQuests.Count), Font = "robotocondensed-bold.ttf", FontSize = 12,
-							Align = TextAnchor.MiddleLeft, Color = "1 1 1 1"
+							Align = TextAnchor.MiddleLeft, Color = "0 0 0 1"
 						}
 					},
 					MINI_QUEST_LIST,
@@ -2431,7 +2431,7 @@ namespace Oxide.Plugins
 				container.Add(new CuiLabel
 				{
 					RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-22.598 -11.514", OffsetMax = "21.517 11.514" },
-					Text = { Text = $"{page + 1}/{pageCount}", Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" }
+					Text = { Text = $"{page + 1}/{pageCount}", Font = "robotocondensed-regular.ttf", FontSize = 14, Align = TextAnchor.MiddleCenter, Color = "0 0 0 1" }
 				}, "Panel_1410");
 				if (page + 1 < pageCount)
 				{
@@ -2537,7 +2537,7 @@ namespace Oxide.Plugins
 					new CuiLabel
 					{
 						RectTransform = { AnchorMin = "0.5 0.5", AnchorMax = "0.5 0.5", OffsetMin = "-78.262 -33.458", OffsetMax = "143.522 33.459" },
-						Text = { Text = FormatMessageText(msg), Font = "robotocondensed-regular.ttf", FontSize = 11, Align = TextAnchor.MiddleLeft, Color = "1 1 1 1", FadeIn = 0.30f }
+						Text = { Text = FormatMessageText(msg), Font = "robotocondensed-regular.ttf", FontSize = 11, Align = TextAnchor.MiddleLeft, Color = "0 0 0 1", FadeIn = 0.30f }
 					},
 					"QuestUiNotice",
 					"NoticeText"
