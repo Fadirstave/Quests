@@ -397,8 +397,12 @@ namespace Oxide.Plugins
 			public string QuestDescriptionMultiLanguage;
 			public string QuestMissions;
 			public string QuestMissionsMultiLanguage;
+			
+			[JsonProperty("Quest permission required to see/take this quest")]
 
 			public string QuestPermission;
+			[JsonProperty("Permission granted to the player when the quest is completed")]
+			public string RewardPermission;
 			public QuestType QuestType;
 			public string Target;
 			public int ActionCount;
@@ -1161,10 +1165,65 @@ namespace Oxide.Plugins
 			EffectNetwork.Send(effect, player.net.connection);
 		}
 		
+		private string GetQuestPermissionPrefix() => $"{Name}.";
+
+		private string NormalizeQuestPermission(string permissionName)
+		{
+			if (string.IsNullOrWhiteSpace(permissionName))
+				return string.Empty;
+
+			permissionName = permissionName.Trim();
+			string prefix = GetQuestPermissionPrefix();
+			if (permissionName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+				permissionName = permissionName.Substring(prefix.Length);
+
+			return permissionName;
+		}
+		private void RegisterQuestPermission(long questId, string permissionName, string permissionType)
+
+		{
+			permissionName = NormalizeQuestPermission(permissionName);
+			return string.IsNullOrEmpty(permissionName) ? string.Empty : $"{Name}.{permissionName}";
+		}
+
+		private void RegisterQuestPermission(string permissionName)
+		{
+			string normalizedPermissionName = NormalizeQuestPermission(permissionName);
+			if (string.IsNullOrEmpty(normalizedPermissionName))
+			{
+				Puts($"Quest {questId}: no {permissionType} permission configured.");
+				return;
+			}
+
+			string fullPermissionName = GetQuestPermissionName(normalizedPermissionName);
+			permission.RegisterPermission(fullPermissionName, this);
+			Puts($"Quest {questId}: registered {permissionType} permission '{fullPermissionName}'.");
+		}
+
+		private bool PlayerHasQuestPermission(string playerId, string permissionName)
+		{
+			string fullPermissionName = GetQuestPermissionName(permissionName);
+			return string.IsNullOrEmpty(fullPermissionName) || permission.UserHasPermission(playerId, fullPermissionName);
+		}
+
+		private void GrantQuestCompletionPermission(BasePlayer player, Quest quest)
+		{
+			string fullPermissionName = GetQuestPermissionName(quest?.RewardPermission);
+			if (string.IsNullOrEmpty(fullPermissionName) || player == null)
+				return;
+
+			if (!permission.UserHasPermission(player.UserIDString, fullPermissionName))
+			{
+				permission.GrantUserPermission(player.UserIDString, fullPermissionName, this);
+				Puts($"Quest {quest.QuestID}: granted reward permission '{fullPermissionName}' to {player.UserIDString}.");
+			}
+		}
+
+		
 		private void ClearPermission()
 		{
 			string[] allPermissions = permission.GetPermissions();
-			const string permissionPrefix = "Quests.";
+			string permissionPrefix = GetQuestPermissionPrefix();;
 
 			foreach (string perm in allPermissions)
 			{
@@ -1339,10 +1398,14 @@ namespace Oxide.Plugins
 					.ToArray();
 				if (quest.Targets.Length == 1)
 					quest.Target = quest.Targets[0];
+				
+				quest.QuestPermission = NormalizeQuestPermission(quest.QuestPermission);
+				quest.RewardPermission = NormalizeQuestPermission(quest.RewardPermission);
 
 				_questList[quest.QuestID] = quest;
 				if (!string.IsNullOrEmpty(quest.QuestPermission))
-					permission.RegisterPermission($"{Name}.{quest.QuestPermission}", this);
+				RegisterQuestPermission(quest.QuestID, quest.QuestPermission, "quest visibility");
+                RegisterQuestPermission(quest.QuestID, quest.RewardPermission, "quest reward");
 			}
 		}
 
@@ -1387,6 +1450,7 @@ namespace Oxide.Plugins
 					QuestDescription = $"Example quest for {questType}.",
 					QuestMissions = $"Complete {questType} objective",
 					QuestPermission = "default",
+                    RewardPermission = string.Empty,
 					QuestType = questType,
 					Target = "0",
 					ActionCount = 1,
@@ -1616,7 +1680,7 @@ namespace Oxide.Plugins
 				case UICategory.Available:
 					foreach (Quest quest in _questList.Values)
 					{
-						if (!string.IsNullOrEmpty(quest.QuestPermission) && !permission.UserHasPermission(playerId.ToString(), $"{Name}." + quest.QuestPermission)) continue;
+						if (!PlayerHasQuestPermission(playerId.ToString(),quest.QuestPermission)) continue;
 
 						bool isQuestAlreadyTaken = playerData.CurrentPlayerQuests.Exists(pq => pq.ParentQuestID == quest.QuestID);
 						bool isQuestCd = playerData.PlayerQuestCooldowns.ContainsKey(quest.QuestID);
@@ -2721,7 +2785,7 @@ namespace Oxide.Plugins
 									return;
 								}
 
-								if (!string.IsNullOrEmpty(currentQuest.QuestPermission) && !permission.UserHasPermission(player.UserIDString, $"{Name}." + currentQuest.QuestPermission))
+								if (!PlayerHasQuestPermission(player.UserIDString, currentQuest.QuestPermission))
 								{
 									UINottice(player, "QUESTS_UI_NotPerm".GetAdaptedMessage(player.UserIDString));
 									return;
@@ -2854,6 +2918,7 @@ namespace Oxide.Plugins
 
 									currentQuest.Finished = false;
 									GiveQuestReward(player, globalQuest.PrizeList);
+									GrantQuestCompletionPermission(player, globalQuest);
 									if (!globalQuest.IsRepeatable)
 									{
 										_playersInfo[player.userID].CompletedQuestIds.Add(currentQuest.ParentQuestID);
