@@ -402,11 +402,8 @@ namespace Oxide.Plugins
 			public string QuestDescriptionMultiLanguage;
 			public string QuestMissions;
 			public string QuestMissionsMultiLanguage;
-			
-			[JsonProperty("Quest permission required to see/take this quest")]
 
 			public string QuestPermission;
-			[JsonProperty("Permission granted to the player when the quest is completed")]
 			public string RewardPermission;
 			public QuestType QuestType;
 			public string Target;
@@ -570,7 +567,7 @@ namespace Oxide.Plugins
 				return;
 			}
 			
-			QuestProgress(player.userID, QuestType.Deploy, plan.GetItem().info.shortname);
+			QuestProgress(player.userID, QuestType.Deploy, plan.GetItem().info.shortname, ent.skinID.ToString());
 		}
 
 		#endregion
@@ -1186,21 +1183,18 @@ namespace Oxide.Plugins
 			return prefix + permissionName;
 		}
 		private string GetQuestPermissionName(string permissionName)
-
 		{
-			permissionName = NormalizeQuestPermission(permissionName);
+			return NormalizeQuestPermission(permissionName);
 		}
 
 		private void RegisterPermissionIfNeeded(string permissionName)
 		{
 			string fullPermissionName = GetQuestPermissionName(permissionName);
-			if (string.IsNullOrEmpty(fullPermissionName) || permission.PermissionExists(fullPermissionName, this)
-
+			if (string.IsNullOrEmpty(fullPermissionName) || permission.PermissionExists(fullPermissionName, this))
 				return;
 
-
 			permission.RegisterPermission(fullPermissionName, this);
-					}
+		}
 
 		private void RegisterQuestPermission(string permissionName)
 		{
@@ -1705,7 +1699,7 @@ namespace Oxide.Plugins
 				case UICategory.Available:
 					foreach (Quest quest in _questList.Values)
 					{
-						if (!PlayerHasQuestPermission(playerId.ToString(),quest.QuestPermission)) continue;
+                       if (!PlayerHasQuestPermission(playerId.ToString(), quest.QuestPermission)) continue;
 
 						bool isQuestAlreadyTaken = playerData.CurrentPlayerQuests.Exists(pq => pq.ParentQuestID == quest.QuestID);
 						bool isQuestCd = playerData.PlayerQuestCooldowns.ContainsKey(quest.QuestID);
