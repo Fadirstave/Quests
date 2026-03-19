@@ -70,6 +70,11 @@ namespace Oxide.Plugins
 
 		public static Quests? Instance;
 		private ImageUI _imageUI;
+		
+		private bool _chainPermissionsRegistered;
+
+		private const int ChainPermissionMin = 1;
+		private const int ChainPermissionMax = 10000;
 
 		private Dictionary<long, Quest> _questList = new();
 
@@ -975,6 +980,7 @@ namespace Oxide.Plugins
 		private void Init()
 		{
 			Instance = this;
+			RegisterChainPermissions();
 			LoadPlayerData();
 			LoadQuestStatisticsData();
 			LoadQuestData();
@@ -1175,29 +1181,49 @@ namespace Oxide.Plugins
 			permissionName = permissionName.Trim();
 			string prefix = GetQuestPermissionPrefix();
 			if (permissionName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-				permissionName = permissionName.Substring(prefix.Length);
+				return prefix + permissionName.Substring(prefix.Length);
 
-			return permissionName;
+			return prefix + permissionName;
 		}
-		private void RegisterQuestPermission(long questId, string permissionName, string permissionType)
+		private string GetQuestPermissionName(string permissionName)
 
 		{
 			permissionName = NormalizeQuestPermission(permissionName);
-			return string.IsNullOrEmpty(permissionName) ? string.Empty : $"{Name}.{permissionName}";
 		}
+
+		private void RegisterPermissionIfNeeded(string permissionName)
+		{
+			string fullPermissionName = GetQuestPermissionName(permissionName);
+			if (string.IsNullOrEmpty(fullPermissionName) || permission.PermissionExists(fullPermissionName, this)
+
+				return;
+
+
+			permission.RegisterPermission(fullPermissionName, this);
+					}
 
 		private void RegisterQuestPermission(string permissionName)
 		{
-			string normalizedPermissionName = NormalizeQuestPermission(permissionName);
-			if (string.IsNullOrEmpty(normalizedPermissionName))
-			{
-				Puts($"Quest {questId}: no {permissionType} permission configured.");
+			string fullPermissionName = GetQuestPermissionName(permissionName);
+			if (string.IsNullOrEmpty(fullPermissionName))
 				return;
+
+			RegisterPermissionIfNeeded(fullPermissionName);
+		}
+
+		private void RegisterChainPermissions()
+		{
+			string chainPermissionPrefix = GetQuestPermissionName("quests.chain.");
+			for (int i = ChainPermissionMin; i <= ChainPermissionMax; i++)
+			{
+				RegisterPermissionIfNeeded($"{chainPermissionPrefix}{i}");
 			}
 
-			string fullPermissionName = GetQuestPermissionName(normalizedPermissionName);
-			permission.RegisterPermission(fullPermissionName, this);
-			Puts($"Quest {questId}: registered {permissionType} permission '{fullPermissionName}'.");
+			if (!_chainPermissionsRegistered)
+			{
+				_chainPermissionsRegistered = true;
+				Puts($"Registered quest chain permissions {chainPermissionPrefix}{ChainPermissionMin} through {chainPermissionPrefix}{ChainPermissionMax}.");
+			}
 		}
 
 		private bool PlayerHasQuestPermission(string playerId, string permissionName)
@@ -1403,9 +1429,8 @@ namespace Oxide.Plugins
 				quest.RewardPermission = NormalizeQuestPermission(quest.RewardPermission);
 
 				_questList[quest.QuestID] = quest;
-				if (!string.IsNullOrEmpty(quest.QuestPermission))
-				RegisterQuestPermission(quest.QuestID, quest.QuestPermission, "quest visibility");
-                RegisterQuestPermission(quest.QuestID, quest.RewardPermission, "quest reward");
+				RegisterQuestPermission(quest.QuestPermission);
+				RegisterQuestPermission(quest.RewardPermission);
 			}
 		}
 
